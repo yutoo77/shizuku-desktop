@@ -2,7 +2,7 @@
 
 - This is an independent personal Windows desktop application. Do not modify adaptive-vrm-dialogue-agent.
 - Address the user as ふぁるるくん. Use plain Japanese and explain technical terms briefly.
-- Implement one major capability at a time. The first slice is transparent presence and reliable recovery, not dialogue.
+- Implement related capabilities in a tested batch, as the user requested on 2026-09-10. Do not stop for approval at each small feature. Preserve transparent presence and reliable recovery before adding dialogue.
 - Check git status before editing. Do not commit models, secrets, recordings, runtime logs, build output, or research material.
 - Never infer this repository's visibility from another repository. No remote is configured initially. Ask before making it public.
 - No automatic startup, constant microphone/screen capture, external AI requests, or autonomous PC actions.

@@ -1,5 +1,20 @@
 import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('companion', {
+  onPresence: (callback: (state: { facing: 'left' | 'right'; quiet: boolean }) => void) => {
+    const listener = (_event: unknown, state: { facing?: unknown; quiet?: unknown } | null) => {
+      if (state && (state.facing === 'left' || state.facing === 'right') && typeof state.quiet === 'boolean') callback({ facing: state.facing, quiet: state.quiet });
+    };
+    ipcRenderer.on('avatar:presence', listener);
+    return () => ipcRenderer.removeListener('avatar:presence', listener);
+  },
+  onSeatRequest: (callback: (revision: number | null) => void) => {
+    const listener = (_event: unknown, revision: unknown) => {
+      if (revision === null || (typeof revision === 'number' && Number.isSafeInteger(revision) && revision >= 0)) callback(revision);
+    };
+    ipcRenderer.on('avatar:seat-request', listener);
+    return () => ipcRenderer.removeListener('avatar:seat-request', listener);
+  },
+  submitSeatAnchor: (revision: number, point: { x: number; y: number }) => ipcRenderer.send('avatar:seat-anchor', revision, point),
   onPosture: (callback: (posture: 'standing' | 'sitting') => void) => {
     const listener = (_event: unknown, posture: unknown) => {
       if (posture === 'standing' || posture === 'sitting') callback(posture);

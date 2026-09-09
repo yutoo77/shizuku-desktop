@@ -24,6 +24,12 @@ button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px 
 .arrows { text-align: center; margin-bottom: 14px; }
 .arrows button { min-width: 44px; margin: 3px; }
 .row { display: flex; justify-content: center; gap: 7px; }
+.seat-row { margin-bottom: 14px; }
+.presence-options { align-items: center; margin-bottom: 8px; }
+.presence-options fieldset { margin-bottom: 0; }
+.favorite-row { margin-bottom: 12px; }
+.favorite-row button { padding-inline: 9px; }
+button[aria-pressed="true"] { background: #e8f0fc; border-color: #7197c8; }
 details { margin-top: 18px; border-top: 1px solid #d9e3ef; padding-top: 12px; }
 summary { cursor: pointer; margin-bottom: 10px; }
 details p { margin: 10px 0; font-size: 13px; overflow-wrap: anywhere; }

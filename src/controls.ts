@@ -5,8 +5,11 @@ type CompanionAction = Parameters<Window['companion']['action']>[0];
 const buttons = document.querySelectorAll<HTMLButtonElement>('button[data-action]');
 const sizes = document.querySelectorAll<HTMLInputElement>('input[name="size"]');
 const postures = document.querySelectorAll<HTMLInputElement>('input[name="posture"]');
+const facings = document.querySelectorAll<HTMLInputElement>('input[name="facing"]');
 const moveButton = document.querySelector<HTMLButtonElement>('#move-mode')!;
 const callButton = document.querySelector<HTMLButtonElement>('#call')!;
+const seatButton = document.querySelector<HTMLButtonElement>('#seat')!;
+const quietButton = document.querySelector<HTMLButtonElement>('#quiet')!;
 let currentStatus: CompanionStatus | null = null;
 let busy = false;
 let requestVersion = 0;
@@ -14,7 +17,8 @@ let operationError = '';
 
 function renderStatus(): void {
   for (const button of buttons) {
-    button.disabled = busy || ((button === moveButton || button === callButton) && !currentStatus?.loaded);
+    button.disabled = busy || ((button === moveButton || button === callButton || button === seatButton) && !currentStatus?.loaded)
+      || (button.dataset.action === 'restore-favorite' && !currentStatus?.hasFavorite);
   }
   for (const radio of sizes) {
     radio.disabled = busy || currentStatus === null;
@@ -24,13 +28,24 @@ function renderStatus(): void {
     radio.disabled = busy || currentStatus === null;
     radio.checked = radio.value === currentStatus?.posture;
   }
+  for (const radio of facings) {
+    radio.disabled = busy || currentStatus === null;
+    radio.checked = radio.value === currentStatus?.facing;
+  }
   document.querySelector('#error')!.textContent = operationError || currentStatus?.error || '';
   if (!currentStatus) return;
   document.querySelector('#model')!.textContent = currentStatus.model || 'モデル未選択';
   document.querySelector('#shortcuts')!.textContent = currentStatus.shortcuts ? '' : 'ショートカットを登録できませんでした。通知領域のアイコンから操作できます。';
   moveButton.textContent = currentStatus.moving ? '移動をやめる' : 'しずくをつかんで移動';
   moveButton.setAttribute('aria-pressed', String(currentStatus.moving));
-  document.querySelector('#move-hint')!.textContent = currentStatus.moving ? 'しずくをドラッグしてね。操作がなければ30秒で戻ります。' : '矢印でも位置を調整できます。';
+  seatButton.textContent = currentStatus.seatCountdown || currentStatus.seating ? '場所の指定をやめる' : '3秒後のポインター位置に座る';
+  quietButton.setAttribute('aria-pressed', String(currentStatus.quiet));
+  quietButton.textContent = currentStatus.quiet ? '動きを戻す' : '動きを休める';
+  document.querySelector('#move-hint')!.textContent = currentStatus.seatCountdown
+    ? `あと${currentStatus.seatCountdown}秒。座らせたい場所へポインターを動かしてね。`
+    : currentStatus.seating ? '座る位置を合わせています。'
+    : currentStatus.moving ? 'しずくをドラッグしてね。操作がなければ30秒で戻ります。'
+    : currentStatus.placementMessage || '矢印でも位置を調整できます。';
 }
 
 async function status(): Promise<void> {
@@ -67,7 +82,7 @@ async function perform(action: CompanionAction): Promise<void> {
 for (const button of buttons) {
   button.addEventListener('click', () => void perform(button.dataset.action as CompanionAction));
 }
-for (const radio of [...sizes, ...postures]) {
+for (const radio of [...sizes, ...postures, ...facings]) {
   radio.addEventListener('change', () => {
     if (radio.checked) void perform(radio.dataset.action as CompanionAction);
   });

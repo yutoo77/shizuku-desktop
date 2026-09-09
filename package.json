@@ -14,7 +14,8 @@
     "soak": "node scripts/soak.mjs",
     "test:resources": "node scripts/resources.mjs",
     "test:context": "node scripts/context-recovery.mjs",
-    "test:postures": "node scripts/postures.mjs"
+    "test:postures": "node scripts/postures.mjs",
+    "test:placement": "node scripts/placement.mjs"
   },
   "engines": {
     "node": ">=24.0.0"

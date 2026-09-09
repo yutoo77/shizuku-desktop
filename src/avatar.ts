@@ -13,6 +13,10 @@ import { STANDING_POSE, SITTING_POSE, POSTURE_TRANSITION_MS, postureEase } from 
 export type Posture = 'standing' | 'sitting';
 
 export interface AvatarDiagnostics {
+  quiet: boolean;
+  facing: 'left' | 'right';
+  changingFacing: boolean;
+  seatAnchor: { x: number; y: number } | null;
   loaded: boolean;
   visible: boolean;
   animating: boolean;
@@ -75,8 +79,14 @@ export class Avatar {
   private modelYaw = 0;
   private standingWidth = 0;
   private standingHeight = 0;
+  private quiet = false;
+  private facing: 'left' | 'right' = 'right';
+  private facingMix = 1;
+  private facingFrom = 1;
+  private facingElapsed = 450;
 
   public readonly diagnostics: AvatarDiagnostics = {
+    quiet: false, facing: 'right', changingFacing: false, seatAnchor: null,
     loaded: false, visible: true, animating: false, contextLost: false, reducedMotion: false, moving: false,
     reacting: false, reactionProgress: 0,
     posture: 'standing', postureBlend: 0, changingPosture: false,
@@ -87,6 +97,7 @@ export class Avatar {
   constructor(
     canvas: HTMLCanvasElement,
     private readonly onContextAvailabilityChanged?: (available: boolean) => void,
+    private readonly onFrame?: () => void,
   ) {
     this.renderer = new WebGLRenderer({
       canvas, alpha: true, antialias: true, powerPreference: 'low-power',
@@ -194,6 +205,8 @@ export class Avatar {
     this.reactionExpression = null;
     this.elapsed = 0;
     this.finishPosture();
+    this.finishFacing();
+    this.diagnostics.seatAnchor = null;
     this.modelWidth = 0;
     this.modelHeight = 0;
     this.standingHeight = 0;
@@ -225,6 +238,7 @@ export class Avatar {
       this.pause();
       this.cancelReaction();
       this.finishPosture();
+      this.finishFacing();
     }
   }
 
@@ -237,8 +251,36 @@ export class Avatar {
     this.postureElapsed = 0;
     this.diagnostics.changingPosture = true;
     this.needsFraming = true;
-    if (!this.visible || this.motion.matches || !this.vrm) this.finishPosture();
+    if (!this.visible || this.still() || !this.vrm) this.finishPosture();
     this.resume();
+  }
+
+  private still(): boolean { return this.motion.matches || this.quiet; }
+
+  public setPresence(facing: 'left' | 'right', quiet: boolean): void {
+    if (this.disposed || (facing === this.facing && quiet === this.quiet)) return;
+    this.pause();
+    this.cancelReaction();
+    if (facing !== this.facing) {
+      this.facing = facing;
+      this.facingFrom = this.facingMix;
+      this.facingElapsed = 0;
+      this.diagnostics.changingFacing = true;
+      this.needsFraming = true;
+    }
+    this.quiet = quiet;
+    this.diagnostics.quiet = quiet;
+    this.diagnostics.facing = facing;
+    if (this.still() || !this.visible || !this.vrm) { this.finishPosture(); this.finishFacing(); }
+    this.resume();
+  }
+
+  private finishFacing(): void {
+    this.facingMix = this.facing === 'left' ? -1 : 1;
+    this.facingFrom = this.facingMix;
+    this.facingElapsed = 450;
+    this.diagnostics.changingFacing = false;
+    this.needsFraming = true;
   }
 
   private finishPosture(): void {
@@ -255,7 +297,7 @@ export class Avatar {
       const sitting = SITTING_POSE[name as keyof typeof SITTING_POSE];
       this.pose(name, ...standing.map((value, axis) => value + (sitting[axis] - value) * this.postureMix) as [number, number, number]);
     }
-    if (this.vrm) this.vrm.scene.rotation.y = this.modelYaw + this.postureMix * 0.35;
+    if (this.vrm) this.vrm.scene.rotation.y = this.modelYaw + this.facingMix * (0.16 + this.postureMix * 0.35);
   }
 
   private framePosture(): void {
@@ -286,7 +328,7 @@ export class Avatar {
     this.reactionStarted = performance.now();
     this.diagnostics.reacting = true;
     this.diagnostics.reactionProgress = 0;
-    if (this.motion.matches) {
+    if (this.still()) {
       // Preserve the still bones and spring state. Only the expression is applied,
       // then one timer restores it; reduced motion never starts a render loop.
       this.applyReactionExpression(0.18);
@@ -409,7 +451,7 @@ export class Avatar {
     this.diagnostics.reducedMotion = this.motion.matches;
     this.pause();
     this.cancelReaction();
-    if (this.motion.matches) this.finishPosture();
+    if (this.still()) { this.finishPosture(); this.finishFacing(); }
     this.resume();
   };
 
@@ -439,7 +481,7 @@ export class Avatar {
     this.sampleFrames = 0;
     if (!this.draw(0)) return;
     // Reduced-motion mode is a still pose and consumes no repeating render timer.
-    if (this.motion.matches) return;
+    if (this.still()) return;
     this.diagnostics.animating = true;
     this.timer = setTimeout(this.tick, Math.ceil(1000 / 30));
   }
@@ -469,7 +511,7 @@ export class Avatar {
 
   private readonly tick = (): void => {
     this.timer = null;
-    if (!this.hasContext() || !this.visible || this.moving || !this.vrm || this.motion.matches) return;
+    if (!this.hasContext() || !this.visible || this.moving || !this.vrm || this.still()) return;
     const started = performance.now();
     const delta = Math.min((started - this.lastFrame) / 1000, 0.1);
     this.lastFrame = started;
@@ -488,7 +530,14 @@ export class Avatar {
   private draw(delta: number): boolean {
     const vrm = this.vrm;
     if (!this.hasContext() || !vrm) return false;
-    const time = this.motion.matches ? 0 : this.elapsed;
+    const time = this.still() ? 0 : this.elapsed;
+    if (this.diagnostics.changingFacing) {
+      this.facingElapsed = Math.min(450, this.facingElapsed + delta * 1000);
+      const target = this.facing === 'left' ? -1 : 1;
+      this.facingMix = this.facingFrom + (target - this.facingFrom) * postureEase(this.facingElapsed / 450);
+      this.diagnostics.changingFacing = this.facingElapsed < 450;
+      this.needsFraming = true;
+    }
     if (this.diagnostics.changingPosture) {
       this.postureElapsed = Math.min(POSTURE_TRANSITION_MS, this.postureElapsed + delta * 1000);
       const target = this.posture === 'sitting' ? 1 : 0;
@@ -501,7 +550,7 @@ export class Avatar {
     let nod = 0;
     let turn = 0;
     let tilt = 0;
-    if (this.reactionStarted !== null && !this.motion.matches) {
+    if (this.reactionStarted !== null && !this.still()) {
       const reaction = sampleCallResponse(performance.now() - this.reactionStarted);
       this.diagnostics.reactionProgress = reaction.progress;
       ({ nod, turn, tilt } = reaction);
@@ -509,10 +558,10 @@ export class Avatar {
       if (reaction.done) this.cancelReaction(true);
     }
     this.pose(VRMHumanBoneName.Head, Math.sin(time * 0.53) * 0.008 + nod,
-      -this.postureMix * 0.2 + Math.sin(time * 0.23) * 0.025 + turn, Math.sin(time * 0.31) * 0.012 + tilt);
+      -this.facingMix * (0.07 + this.postureMix * 0.2) + Math.sin(time * 0.23) * 0.025 + turn, Math.sin(time * 0.31) * 0.012 + tilt);
     this.pose(VRMHumanBoneName.Chest, Math.sin(time * 1.35) * 0.004, 0, 0);
     const blinkPhase = (time + 1.8) % 5.6;
-    const blink = !this.motion.matches && blinkPhase < 0.18
+    const blink = !this.still() && blinkPhase < 0.18
       ? Math.sin(blinkPhase / 0.18 * Math.PI) : 0;
     for (const name of this.blinkNames) vrm.expressionManager?.setValue(name, blink);
     vrm.update(delta);
@@ -531,6 +580,18 @@ export class Avatar {
     this.diagnostics.drawCalls = this.renderer.info.render.calls;
     this.diagnostics.geometries = this.renderer.info.memory.geometries;
     this.diagnostics.textures = this.renderer.info.memory.textures;
+    // A bone-derived seat reference, not recognition of any other window. Offset
+    // slightly below the hips to approximate the contact surface of the body.
+    const hips = this.vrm?.humanoid.getRawBoneNode(VRMHumanBoneName.Hips);
+    this.diagnostics.seatAnchor = null;
+    if (hips && this.postureMix === 1 && !this.diagnostics.changingFacing) {
+      const point = hips.getWorldPosition(new Vector3());
+      point.y -= this.standingHeight * 0.07;
+      point.project(this.camera);
+      const x = (point.x + 1) / 2, y = (1 - point.y) / 2;
+      if (Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x <= 1 && y >= 0 && y <= 1) this.diagnostics.seatAnchor = { x, y };
+    }
+    this.onFrame?.();
     return true;
   }
 

@@ -18,7 +18,17 @@ let moveRevision = 0;
 let moveEnding = false;
 let pointerId: number | null = null;
 let pendingCall: { revision: number; expires: number } | null = null;
+let pendingSeat: number | null = null;
 const unsubscribers: Array<() => void> = [];
+
+function trySeat(): void {
+  const state = avatar?.diagnostics;
+  if (pendingSeat === null || disposed || loading || !state?.loaded || !state.visible || state.contextLost || state.moving
+    || state.changingPosture || state.changingFacing || state.posture !== 'sitting' || !state.seatAnchor) return;
+  const request = pendingSeat;
+  pendingSeat = null;
+  window.companion.submitSeatAnchor(request, state.seatAnchor);
+}
 
 function publishAvailability(): void {
   if (disposed || !avatar) return;
@@ -33,6 +43,7 @@ function publishAvailability(): void {
 function onContextAvailabilityChanged(available: boolean): void {
   if (disposed) return;
   pendingCall = null;
+  pendingSeat = null;
   if (!available) cancelMoveMode();
   // A replacement model may still be parsing. Keep native actions unavailable
   // until that load's current revision completes, even if the GPU returns first.
@@ -41,6 +52,7 @@ function onContextAvailabilityChanged(available: boolean): void {
 
 function reportError(error: unknown): void {
   pendingCall = null;
+  pendingSeat = null;
   cancelMoveMode();
   const message = error instanceof Error ? error.message : 'モデルを表示できませんでした。';
   if (avatar) avatar.diagnostics.error = message;
@@ -50,6 +62,7 @@ function reportError(error: unknown): void {
 
 async function reload(): Promise<void> {
   pendingCall = null;
+  pendingSeat = null;
   const current = ++revision;
   loading = true;
   cancelMoveMode();
@@ -79,10 +92,11 @@ async function reload(): Promise<void> {
 }
 
 function updateVisibility(): void {
-  if (!windowVisible) pendingCall = null;
+  if (!windowVisible) { pendingCall = null; pendingSeat = null; }
   if (!windowVisible || document.hidden) cancelMoveMode();
   avatar?.setVisible(windowVisible && !document.hidden);
   tryStartCall();
+  trySeat();
 }
 
 function tryStartCall(): void {
@@ -136,6 +150,7 @@ async function updateMoveMode(state: {active: boolean; revision: number}): Promi
   moveRevision = state.revision;
   if (!state.active) return;
   pendingCall = null;
+  pendingSeat = null;
   moveActive = true;
   const current = moveRevision;
   try {
@@ -190,7 +205,7 @@ function onWindowInterruption(): void {
 
 try {
   if (!(canvas instanceof HTMLCanvasElement)) throw new Error('描画領域を準備できませんでした。');
-  avatar = new Avatar(canvas, onContextAvailabilityChanged);
+  avatar = new Avatar(canvas, onContextAvailabilityChanged, trySeat);
   window.__diagnostics = avatar.diagnostics;
   unsubscribers.push(window.companion.onVisibility(visible => {
     windowVisible = visible;
@@ -200,8 +215,20 @@ try {
   unsubscribers.push(window.companion.onPosture(posture => {
     if (disposed || avatar?.diagnostics.posture === posture) return;
     pendingCall = null;
+    pendingSeat = null;
     cancelMoveMode();
     avatar?.setPosture(posture);
+  }));
+  unsubscribers.push(window.companion.onPresence(state => {
+    if (disposed || (avatar?.diagnostics.facing === state.facing && avatar?.diagnostics.quiet === state.quiet)) return;
+    pendingCall = null;
+    pendingSeat = null;
+    cancelMoveMode();
+    avatar?.setPresence(state.facing, state.quiet);
+  }));
+  unsubscribers.push(window.companion.onSeatRequest(request => {
+    pendingSeat = request;
+    if (request !== null) { pendingCall = null; trySeat(); }
   }));
   unsubscribers.push(window.companion.onCalled(expiresAt => {
     if (disposed || loading || !windowVisible || !avatar?.diagnostics.loaded || avatar.diagnostics.contextLost || !Number.isFinite(expiresAt)) return;
@@ -227,6 +254,7 @@ window.addEventListener('beforeunload', () => {
   cancelMoveMode();
   disposed = true;
   pendingCall = null;
+  pendingSeat = null;
   avatar?.setVisible(false);
   clearMoveMode();
   revision += 1;
