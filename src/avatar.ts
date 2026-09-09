@@ -13,6 +13,7 @@ export interface AvatarDiagnostics {
   loaded: boolean;
   visible: boolean;
   animating: boolean;
+  contextLost: boolean;
   reducedMotion: boolean;
   moving: boolean;
   reacting: boolean;
@@ -49,6 +50,7 @@ export class Avatar {
   private reactionExpressionRest = 0;
   private visible = true;
   private moving = false;
+  private contextLost = false;
   private disposed = false;
   private loadVersion = 0;
   private elapsed = 0;
@@ -60,13 +62,16 @@ export class Avatar {
   private blinkNames: string[] = [];
 
   public readonly diagnostics: AvatarDiagnostics = {
-    loaded: false, visible: true, animating: false, reducedMotion: false, moving: false,
+    loaded: false, visible: true, animating: false, contextLost: false, reducedMotion: false, moving: false,
     reacting: false, reactionProgress: 0,
     renderedFrames: 0, fps: 0, modelName: null, triangles: 0, drawCalls: 0,
     geometries: 0, textures: 0, loadTimeMs: null, pixelRatio: 1, error: null,
   };
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    private readonly onContextAvailabilityChanged?: (available: boolean) => void,
+  ) {
     this.renderer = new WebGLRenderer({
       canvas, alpha: true, antialias: true, powerPreference: 'low-power',
     });
@@ -78,6 +83,11 @@ export class Avatar {
     this.renderer.toneMapping = ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1;
     this.renderer.shadowMap.enabled = false;
+    // Register after Three's own listeners: its restored handler synchronously
+    // rebuilds GPU state before we draw again. Retain model/ImageBitmap data so
+    // Three can upload it into the restored context without reloading the file.
+    canvas.addEventListener('webglcontextlost', this.onContextLost);
+    canvas.addEventListener('webglcontextrestored', this.onContextRestored);
     this.scene.add(new HemisphereLight(0xffffff, 0xc7d6ea, 1.6));
     const light = new DirectionalLight(0xfff8f0, 1.8);
     light.position.set(-1, 2, 3);
@@ -115,7 +125,10 @@ export class Avatar {
       this.reactionExpression = callExpression(expressions);
       this.blinkNames = expressions.includes('blink') ? ['blink']
         : expressions.filter(name => name === 'blinkLeft' || name === 'blinkRight');
-      vrm.update(0);
+      if (this.hasContext()) vrm.update(0);
+      // Loading may finish during an outage. Apply only the rest pose needed for
+      // bounds; animation, expressions and spring simulation wait for recovery.
+      else vrm.humanoid.update();
       vrm.scene.updateMatrixWorld(true);
       // Precise bounds include the skinned rest pose after lowering the arms.
       const bounds = new Box3().setFromObject(vrm.scene, true);
@@ -171,14 +184,18 @@ export class Avatar {
     this.diagnostics.geometries = 0;
     this.diagnostics.textures = 0;
     this.renderer.renderLists.dispose();
-    if (!this.disposed && this.visible) this.renderer.clear();
+    if (this.visible && this.hasContext()) this.renderer.clear();
   }
 
   public setVisible(visible: boolean): void {
+    // Main's ready handshake and document visibility can repeat the same state.
+    // Lifecycle transitions (load, context restore, motion and move) resume their
+    // own work; duplicate visibility notifications must not redraw a still pose.
+    if (this.disposed || this.visible === visible) return;
     this.visible = visible;
     this.diagnostics.visible = visible;
     if (visible) {
-      if (!this.vrm && !this.disposed) this.renderer.clear();
+      if (!this.vrm && this.hasContext()) this.renderer.clear();
       this.resume();
     }
     else {
@@ -189,7 +206,7 @@ export class Avatar {
 
   /** Accept one short response; repeated calls never queue or prolong it. */
   public call(): boolean {
-    if (this.disposed || !this.visible || this.moving || !this.vrm || this.reactionStarted !== null) return false;
+    if (!this.hasContext() || !this.visible || this.moving || !this.vrm || this.reactionStarted !== null) return false;
     this.reactionExpressionRest = this.reactionExpression
       ? this.vrm.expressionManager?.getValue(this.reactionExpression) ?? 0 : 0;
     this.reactionStarted = performance.now();
@@ -200,11 +217,11 @@ export class Avatar {
       // then one timer restores it; reduced motion never starts a render loop.
       this.applyReactionExpression(0.18);
       this.vrm.expressionManager?.update();
-      this.renderCurrentFrame();
+      if (!this.renderCurrentFrame()) return false;
       this.reactionTimer = setTimeout(() => {
         this.reactionTimer = null;
         this.cancelReaction(true);
-        if (this.disposed || !this.visible || this.moving || !this.vrm) return;
+        if (!this.hasContext() || !this.visible || this.moving || !this.vrm) return;
         this.vrm.expressionManager?.update();
         this.renderCurrentFrame();
       }, CALL_RESPONSE_MS);
@@ -214,7 +231,7 @@ export class Avatar {
 
   /** Snapshot only our canvas, once, while its displayed pose stays frozen. */
   public enterMoveMode(): Array<{ x: number; y: number; width: number; height: number }> {
-    if (this.disposed || !this.visible || !this.vrm) {
+    if (!this.hasContext() || !this.visible || !this.vrm) {
       throw new Error('しずくが表示されてから、もう一度試してください。');
     }
     this.pause();
@@ -225,7 +242,7 @@ export class Avatar {
     this.diagnostics.moving = true;
     // Do not call draw(0): even a zero delta would update bones, expressions and
     // spring bones. The shaped window must match exactly this frozen frame.
-    this.renderCurrentFrame();
+    if (!this.renderCurrentFrame()) throw new Error('描画を確認できませんでした。');
     const gl = this.renderer.getContext();
     if (gl.isContextLost()) throw new Error('描画を確認できませんでした。');
     const width = gl.drawingBufferWidth;
@@ -255,11 +272,65 @@ export class Avatar {
     this.clear();
     this.motion.removeEventListener('change', this.onMotionChanged);
     window.removeEventListener('resize', this.onResize);
+    this.renderer.domElement.removeEventListener('webglcontextlost', this.onContextLost);
+    this.renderer.domElement.removeEventListener('webglcontextrestored', this.onContextRestored);
     this.renderer.dispose();
     this.renderer.forceContextLoss();
   }
 
   private readonly onResize = (): void => this.resize();
+  private readonly onContextLost = (event: Event): void => {
+    // Allow browser-managed restoration. Three also calls preventDefault.
+    event.preventDefault();
+    this.suspendForContextLoss();
+  };
+
+  private readonly onContextRestored = (): void => {
+    if (this.disposed || !this.contextLost || this.renderer.getContext().isContextLost()) return;
+    this.contextLost = false;
+    this.diagnostics.contextLost = false;
+    try {
+      // Apply any size changes made while lost, then draw exactly once before
+      // restarting the normal timer. Hidden avatars never draw here.
+      this.resize(false);
+      if (this.visible && !this.vrm && this.hasContext()) this.renderer.clear();
+      this.resume();
+    } catch {
+      // Publish the failure before notifying the renderer. A valid GL context
+      // does not guarantee another restoration event after drawing fails.
+      this.diagnostics.error = '描画を再開できませんでした。終了して、もう一度起動してください。';
+      this.suspendForContextLoss();
+      return;
+    }
+    if (this.hasContext()) this.onContextAvailabilityChanged?.(true);
+  };
+
+  private suspendForContextLoss(): void {
+    if (this.disposed || this.contextLost) return;
+    this.contextLost = true;
+    this.diagnostics.contextLost = true;
+    this.pause();
+    this.cancelReaction();
+    this.moving = false;
+    this.diagnostics.moving = false;
+    this.diagnostics.triangles = 0;
+    this.diagnostics.drawCalls = 0;
+    this.diagnostics.geometries = 0;
+    this.diagnostics.textures = 0;
+    this.onContextAvailabilityChanged?.(false);
+  }
+
+  private hasContext(): boolean {
+    if (this.disposed || this.contextLost) return false;
+    // Loss can precede delivery of the DOM event. Stop before updating the VRM,
+    // and do not count a render that Three silently skipped during that gap.
+    if (this.renderer.getContext().isContextLost()) {
+      this.suspendForContextLoss();
+      return false;
+    }
+    return true;
+  }
+
   private readonly onMotionChanged = (): void => {
     this.diagnostics.reducedMotion = this.motion.matches;
     this.pause();
@@ -267,11 +338,12 @@ export class Avatar {
     this.resume();
   };
 
-  private resize(): void {
+  private resize(redraw = true): void {
     if (this.disposed) return;
     const width = Math.max(1, window.innerWidth);
     const height = Math.max(1, window.innerHeight);
-    this.renderer.setSize(width, height, false);
+    const available = this.hasContext();
+    if (available) this.renderer.setSize(width, height, false);
     const frameHeight = this.modelHeight > 0
       ? Math.max(this.modelHeight, this.modelWidth / (width / height)) * 1.12 : 2;
     this.camera.top = frameHeight / 2;
@@ -279,18 +351,18 @@ export class Avatar {
     this.camera.right = this.camera.top * width / height;
     this.camera.left = -this.camera.right;
     this.camera.updateProjectionMatrix();
-    if (this.visible && this.vrm) {
+    if (available && redraw && this.visible && this.vrm) {
       if (this.moving) this.renderCurrentFrame();
       else this.draw(0);
     }
   }
 
   private resume(): void {
-    if (this.disposed || !this.visible || this.moving || !this.vrm || this.timer !== null) return;
+    if (!this.hasContext() || !this.visible || this.moving || !this.vrm || this.timer !== null) return;
     this.lastFrame = performance.now();
     this.sampleStart = this.lastFrame;
     this.sampleFrames = 0;
-    this.draw(0);
+    if (!this.draw(0)) return;
     // Reduced-motion mode is a still pose and consumes no repeating render timer.
     if (this.motion.matches) return;
     this.diagnostics.animating = true;
@@ -322,12 +394,12 @@ export class Avatar {
 
   private readonly tick = (): void => {
     this.timer = null;
-    if (this.disposed || !this.visible || this.moving || !this.vrm || this.motion.matches) return;
+    if (!this.hasContext() || !this.visible || this.moving || !this.vrm || this.motion.matches) return;
     const started = performance.now();
     const delta = Math.min((started - this.lastFrame) / 1000, 0.1);
     this.lastFrame = started;
     this.elapsed += delta;
-    this.draw(delta);
+    if (!this.draw(delta)) return;
     this.sampleFrames += 1;
     if (started - this.sampleStart >= 1000) {
       this.diagnostics.fps = Math.round(this.sampleFrames * 10000 / (started - this.sampleStart)) / 10;
@@ -338,9 +410,9 @@ export class Avatar {
     this.timer = setTimeout(this.tick, Math.max(1, Math.ceil(1000 / 30 - (performance.now() - started))));
   };
 
-  private draw(delta: number): void {
+  private draw(delta: number): boolean {
     const vrm = this.vrm;
-    if (!vrm) return;
+    if (!this.hasContext() || !vrm) return false;
     const time = this.motion.matches ? 0 : this.elapsed;
     let nod = 0;
     let turn = 0;
@@ -360,16 +432,19 @@ export class Avatar {
       ? Math.sin(blinkPhase / 0.18 * Math.PI) : 0;
     for (const name of this.blinkNames) vrm.expressionManager?.setValue(name, blink);
     vrm.update(delta);
-    this.renderCurrentFrame();
+    return this.renderCurrentFrame();
   }
 
-  private renderCurrentFrame(): void {
+  private renderCurrentFrame(): boolean {
+    if (!this.hasContext()) return false;
     this.renderer.render(this.scene, this.camera);
+    if (!this.hasContext()) return false;
     this.diagnostics.renderedFrames += 1;
     this.diagnostics.triangles = this.renderer.info.render.triangles;
     this.diagnostics.drawCalls = this.renderer.info.render.calls;
     this.diagnostics.geometries = this.renderer.info.memory.geometries;
     this.diagnostics.textures = this.renderer.info.memory.textures;
+    return true;
   }
 
   private pose(name: string, x: number, y: number, z: number): void {

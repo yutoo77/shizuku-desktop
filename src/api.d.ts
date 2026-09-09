@@ -3,7 +3,7 @@ declare global {
   interface Window {
     companion: {
       getModel(): Promise<ArrayBuffer | null>;
-      ready(state: {ok: boolean; error?: string}): void;
+      ready(state: {ok: boolean; error?: string; recovering?: boolean}): void;
       onVisibility(callback: (visible: boolean) => void): () => void;
       onModelChanged(callback: () => void): () => void;
       onCalled(callback: (expiresAt: number) => void): () => void;

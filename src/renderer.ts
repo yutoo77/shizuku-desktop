@@ -11,6 +11,7 @@ const canvas = document.getElementById('avatar');
 let avatar: Avatar | null = null;
 let disposed = false;
 let revision = 0;
+let loading = false;
 let windowVisible = true;
 let moveActive = false;
 let moveRevision = 0;
@@ -19,31 +20,61 @@ let pointerId: number | null = null;
 let pendingCall: { revision: number; expires: number } | null = null;
 const unsubscribers: Array<() => void> = [];
 
+function publishAvailability(): void {
+  if (disposed || !avatar) return;
+  const { contextLost, loaded, error } = avatar.diagnostics;
+  window.companion.ready({
+    ok: !contextLost && !loading && loaded,
+    recovering: contextLost,
+    error: error ?? (contextLost ? '描画の復旧を待っています。' : loading ? 'モデルを読み込んでいます。' : undefined),
+  });
+}
+
+function onContextAvailabilityChanged(available: boolean): void {
+  if (disposed) return;
+  pendingCall = null;
+  if (!available) cancelMoveMode();
+  // A replacement model may still be parsing. Keep native actions unavailable
+  // until that load's current revision completes, even if the GPU returns first.
+  if (!available || !loading) publishAvailability();
+}
+
 function reportError(error: unknown): void {
   pendingCall = null;
   cancelMoveMode();
   const message = error instanceof Error ? error.message : 'モデルを表示できませんでした。';
   if (avatar) avatar.diagnostics.error = message;
-  window.companion.ready({ ok: false, error: message });
+  if (avatar) publishAvailability();
+  else window.companion.ready({ ok: false, error: message });
 }
 
 async function reload(): Promise<void> {
   pendingCall = null;
   const current = ++revision;
+  loading = true;
   cancelMoveMode();
   avatar?.clear();
+  publishAvailability();
   try {
-    const buffer = await window.companion.getModel();
+    const buffer = await window.companion.getModel().catch(() => {
+      // Electron's rejected-IPC wrapper is an implementation detail, not useful
+      // recovery guidance in the tray or the small controls window.
+      throw new Error('VRMを読めません。通知領域から選び直してください。');
+    });
     if (disposed || current !== revision || !avatar) return;
     if (!buffer) {
       avatar.clear();
       reportError(new Error('トレイの「VRMを選ぶ…」からVRMを選んでください。'));
       return;
     }
-    const loaded = await avatar.load(buffer);
-    if (loaded && !disposed && current === revision) window.companion.ready({ ok: true });
+    await avatar.load(buffer);
   } catch (error) {
     if (!disposed && current === revision) reportError(error);
+  } finally {
+    if (!disposed && current === revision) {
+      loading = false;
+      publishAvailability();
+    }
   }
 }
 
@@ -62,7 +93,7 @@ function tryStartCall(): void {
   }
   // Native showInactive and document.visibilitychange can arrive separately.
   // Retain only one brief request until the page is ready to draw it.
-  if (!windowVisible || document.hidden || moveActive || !avatar?.diagnostics.loaded) return;
+  if (!windowVisible || document.hidden || moveActive || loading || !avatar?.diagnostics.loaded || avatar.diagnostics.contextLost) return;
   pendingCall = null;
   avatar.call();
 }
@@ -159,7 +190,7 @@ function onWindowInterruption(): void {
 
 try {
   if (!(canvas instanceof HTMLCanvasElement)) throw new Error('描画領域を準備できませんでした。');
-  avatar = new Avatar(canvas);
+  avatar = new Avatar(canvas, onContextAvailabilityChanged);
   window.__diagnostics = avatar.diagnostics;
   unsubscribers.push(window.companion.onVisibility(visible => {
     windowVisible = visible;
@@ -167,7 +198,7 @@ try {
   }));
   unsubscribers.push(window.companion.onModelChanged(() => { void reload(); }));
   unsubscribers.push(window.companion.onCalled(expiresAt => {
-    if (disposed || !windowVisible || !avatar?.diagnostics.loaded || !Number.isFinite(expiresAt)) return;
+    if (disposed || loading || !windowVisible || !avatar?.diagnostics.loaded || avatar.diagnostics.contextLost || !Number.isFinite(expiresAt)) return;
     pendingCall = { revision, expires: expiresAt };
     tryStartCall();
   }));

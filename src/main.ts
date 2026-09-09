@@ -24,6 +24,7 @@ let scale = 100;
 let savedBounds: Rectangle | undefined;
 let loadError = '';
 let modelLoaded = false;
+let contextRecovering = false;
 let visible = true;
 let shortcuts = true;
 let metricsTimer: NodeJS.Timeout | undefined;
@@ -100,6 +101,7 @@ function reset() {
 }
 function callAvatar() {
   if (quitting || !avatar || avatar.isDestroyed()) return;
+  if (contextRecovering) return;
   if (!modelLoaded) { openControls(); return; }
   setMoveMode(false);
   if (!visible) setVisible(true);
@@ -122,6 +124,7 @@ function renewMoveTimeout() {
 }
 function setMoveMode(next: boolean) {
   if (quitting || !avatar || avatar.isDestroyed()) return;
+  if (next && contextRecovering) return;
   if (next && !modelLoaded) { openControls(); return; }
   if (next && !visible) setVisible(true);
   if (moveMode === next) return;
@@ -311,7 +314,7 @@ async function start() {
   avatar.setIgnoreMouseEvents(true);
   secureWindow(avatar);
   avatar.on('closed', () => { avatarPlacementGeneration++; pendingAvatarBounds = undefined; avatar = null; if (!quitting) app.quit(); });
-  avatar.webContents.on('render-process-gone', () => { setMoveMode(false); modelLoaded = false; loadError = '描画が停止しました。終了して再起動してください。'; updateMenu(); });
+  avatar.webContents.on('render-process-gone', () => { setMoveMode(false); modelLoaded = false; contextRecovering = false; loadError = '描画が停止しました。終了して再起動してください。'; updateMenu(); });
   avatar.webContents.on('unresponsive', () => setMoveMode(false));
   ipcMain.handle('avatar:move-shape', (event, revision, value) => {
     if (!trusted(event, avatar, avatarUrl)) throw new Error('Denied sender');
@@ -333,6 +336,9 @@ async function start() {
   });
   ipcMain.on('avatar:ready', (event, state) => {
     if (!trusted(event, avatar, avatarUrl) || !state || typeof state.ok !== 'boolean') return;
+    if (state.recovering !== undefined && typeof state.recovering !== 'boolean') return;
+    if (state.ok && state.recovering) return;
+    contextRecovering = state.recovering === true;
     modelLoaded = state.ok;
     if (!state.ok) setMoveMode(false);
     loadError = state.ok ? '' : String(state.error ?? 'モデル未選択').slice(0, 180);
@@ -374,7 +380,7 @@ async function start() {
     avatar: () => avatar, controls: () => controls, setVisible, reset, openControls, action,
     tray: () => tray, trayMenu: () => trayMenu,
     setMoveMode, moveState: () => ({ active: moveMode, revision: moveRevision, shape: moveShape, dragging: !!moveStart }),
-    setScale, status: () => ({ visible, modelLoaded, loadError, shortcuts, scale }), metrics: () => app.getAppMetrics(),
+    setScale, status: () => ({ visible, modelLoaded, contextRecovering, loadError, shortcuts, scale }), metrics: () => app.getAppMetrics(),
   };
 }
 

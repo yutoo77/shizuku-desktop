@@ -12,7 +12,8 @@
     "start": "npm run build && electron .",
     "smoke": "node scripts/smoke.mjs",
     "soak": "node scripts/soak.mjs",
-    "test:resources": "node scripts/resources.mjs"
+    "test:resources": "node scripts/resources.mjs",
+    "test:context": "node scripts/context-recovery.mjs"
   },
   "engines": {
     "node": ">=24.0.0"

@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld('companion', {
   },
   submitMoveShape: (revision: number, rects: Array<{x: number; y: number; width: number; height: number}>) => ipcRenderer.invoke('avatar:move-shape', revision, rects),
   movePointer: (revision: number, kind: 'start'|'move'|'end'|'cancel', point?: {x: number; y: number}) => ipcRenderer.send('avatar:move-pointer', revision, kind, point),
-  ready: (state: {ok: boolean; error?: string}) => ipcRenderer.send('avatar:ready', state),
+  ready: (state: {ok: boolean; error?: string; recovering?: boolean}) => ipcRenderer.send('avatar:ready', state),
   onVisibility: (callback: (visible: boolean) => void) => {
     const listener = (_event: unknown, visible: boolean) => callback(visible);
     ipcRenderer.on('avatar:visibility', listener);
