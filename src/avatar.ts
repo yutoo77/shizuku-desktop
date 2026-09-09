@@ -46,7 +46,8 @@ export class Avatar {
   private lastFrame = 0;
   private sampleStart = 0;
   private sampleFrames = 0;
-  private frameHeight = 2;
+  private modelWidth = 0;
+  private modelHeight = 0;
   private blinkNames: string[] = [];
 
   public readonly diagnostics: AvatarDiagnostics = {
@@ -110,8 +111,8 @@ export class Avatar {
       }
       const center = bounds.getCenter(new Vector3());
       vrm.scene.position.sub(center);
-      const aspect = Math.max(1, window.innerWidth) / Math.max(1, window.innerHeight);
-      this.frameHeight = Math.max(size.y, size.x / aspect) * 1.12;
+      this.modelWidth = size.x;
+      this.modelHeight = size.y;
       this.camera.position.z = Math.max(6, size.z + size.y * 3);
       this.camera.far = this.camera.position.z + size.z + size.y * 3;
       const meta = vrm.meta as unknown as Record<string, unknown>;
@@ -141,6 +142,8 @@ export class Avatar {
     this.bones.clear();
     this.blinkNames = [];
     this.elapsed = 0;
+    this.modelWidth = 0;
+    this.modelHeight = 0;
     this.diagnostics.loaded = false;
     this.diagnostics.modelName = null;
     this.diagnostics.error = null;
@@ -219,7 +222,9 @@ export class Avatar {
     const width = Math.max(1, window.innerWidth);
     const height = Math.max(1, window.innerHeight);
     this.renderer.setSize(width, height, false);
-    this.camera.top = this.frameHeight / 2;
+    const frameHeight = this.modelHeight > 0
+      ? Math.max(this.modelHeight, this.modelWidth / (width / height)) * 1.12 : 2;
+    this.camera.top = frameHeight / 2;
     this.camera.bottom = -this.camera.top;
     this.camera.right = this.camera.top * width / height;
     this.camera.left = -this.camera.right;

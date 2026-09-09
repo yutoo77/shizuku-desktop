@@ -3,13 +3,16 @@ import type { IpcMainEvent, IpcMainInvokeEvent, Rectangle } from 'electron';
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { defaultBounds, clampBounds, followControlMove } from './geometry.mjs';
+import { defaultBounds, clampBounds, followControlMove, normalizeScale, avatarSize, resizeAvatarBounds } from './geometry.mjs';
 import { MAX_MODEL_BYTES, validateModel } from './model-policy.mjs';
 import { validateShape, containsPoint, dragBounds } from './move-policy.mjs';
 
 const root = path.resolve(__dirname, '..');
 const work = path.join(root, 'work');
-const configPath = path.join(root, 'local.config.json');
+const testDataName = process.env.SHIZUKU_TEST === '1' ? process.env.SHIZUKU_TEST_DATA : undefined;
+if (testDataName !== undefined && !/^[A-Za-z0-9_-]{1,80}$/.test(testDataName)) throw new Error('Invalid test data directory name');
+const dataRoot = testDataName ? path.join(work, testDataName) : work;
+const configPath = path.join(testDataName ? dataRoot : root, 'local.config.json');
 const avatarUrl = pathToFileURL(path.join(__dirname, 'index.html')).href;
 const controlsUrl = pathToFileURL(path.join(__dirname, 'controls.html')).href;
 let avatar: BrowserWindow | null = null;
@@ -17,6 +20,7 @@ let controls: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let trayMenu: Menu | null = null;
 let modelPath = '';
+let scale = 100;
 let savedBounds: Rectangle | undefined;
 let loadError = '';
 let modelLoaded = false;
@@ -44,7 +48,7 @@ function avatarBounds(win: BrowserWindow): Rectangle {
 function placeAvatar(bounds: Rectangle) {
   if (quitting || !avatar || avatar.isDestroyed()) return;
   const win = avatar;
-  const target = clampBounds(bounds, area());
+  const target = clampBounds({ ...bounds, ...avatarSize(scale, area()) }, area());
   const generation = ++avatarPlacementGeneration;
   pendingAvatarBounds = target;
   const verify = (retriesRemaining: number) => setImmediate(() => {
@@ -67,7 +71,7 @@ function placeAvatar(bounds: Rectangle) {
 }
 function save() {
   if (avatar && !avatar.isDestroyed()) savedBounds = avatarBounds(avatar);
-  const value = JSON.stringify({ modelPath, bounds: savedBounds }, null, 2);
+  const value = JSON.stringify({ modelPath, bounds: savedBounds, scale }, null, 2);
   writeQueue = writeQueue.then(() => writeFile(configPath, value, 'utf8')).catch(error => console.error('Configuration could not be saved:', error.code));
   return writeQueue;
 }
@@ -91,8 +95,18 @@ function reset() {
   if (quitting) return;
   setMoveMode(false);
   setVisible(true);
-  placeAvatar(defaultBounds(area()));
+  placeAvatar(defaultBounds(area(), scale));
   saveSoon();
+}
+function setScale(value: unknown) {
+  if (typeof value !== 'number' || ![80, 100, 120].includes(value)) throw new Error('Unknown size');
+  if (quitting || !avatar || avatar.isDestroyed() || value === scale) return;
+  setMoveMode(false);
+  const bounds = resizeAvatarBounds(avatarBounds(avatar), value, area());
+  scale = value;
+  placeAvatar(bounds);
+  saveSoon();
+  updateMenu();
 }
 function renewMoveTimeout() {
   clearTimeout(moveTimeout);
@@ -146,6 +160,7 @@ function secureWindow(win: BrowserWindow) {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
   win.webContents.on('will-attach-webview', event => event.preventDefault());
+  win.webContents.on('content-bounds-updated', event => event.preventDefault());
 }
 function icon() {
   const size = 32;
@@ -164,6 +179,11 @@ function updateMenu() {
     { label: visible ? '隠す' : '表示する', click: () => setVisible(!visible) },
     { label: moveMode ? '移動をやめる' : 'しずくをつかんで移動', enabled: modelLoaded, click: () => setMoveMode(!moveMode) },
     { label: '位置を動かす…', click: openControls },
+    { label: '大きさ', submenu: [
+      { label: '小', type: 'radio', checked: scale === 80, click: () => setScale(80) },
+      { label: '標準', type: 'radio', checked: scale === 100, click: () => setScale(100) },
+      { label: '大', type: 'radio', checked: scale === 120, click: () => setScale(120) },
+    ] },
     { label: '画面端に戻す', click: reset },
     { type: 'separator' as const },
     { label: 'VRMを選ぶ…', click: () => void chooseModel() },
@@ -241,6 +261,9 @@ async function action(value: string) {
   else if (value === 'reset') reset();
   else if (value === 'choose-model') await chooseModel();
   else if (value === 'move-mode') setMoveMode(!moveMode);
+  else if (value === 'size-small') setScale(80);
+  else if (value === 'size-standard') setScale(100);
+  else if (value === 'size-large') setScale(120);
   else if (value === 'quit') app.quit();
   else if (['left', 'right', 'up', 'down'].includes(value) && avatar) {
     setMoveMode(false);
@@ -252,11 +275,12 @@ async function action(value: string) {
   } else throw new Error('Unknown action');
 }
 async function start() {
-  await mkdir(work, { recursive: true });
+  await mkdir(dataRoot, { recursive: true });
   try {
-    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    const config = JSON.parse((await readFile(configPath, 'utf8')).replace(/^\uFEFF/, ''));
     if (typeof config.modelPath === 'string') modelPath = config.modelPath;
-    if (config.bounds && typeof config.bounds === 'object') savedBounds = clampBounds(config.bounds, area());
+    scale = normalizeScale(config.scale);
+    if (config.bounds && typeof config.bounds === 'object') savedBounds = clampBounds({ ...config.bounds, ...avatarSize(scale, area()) }, area());
   } catch { /* Missing or malformed local config returns to safe defaults. */ }
   const allowedFiles = new Set(['index.html','controls.html','renderer.js','controls.js','style.css'].map(file => pathToFileURL(path.join(__dirname,file)).href));
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
@@ -266,7 +290,7 @@ async function start() {
     callback({ cancel: !allowedFiles.has(details.url) && !details.url.startsWith('blob:') && !details.url.startsWith('data:') });
   });
   avatar = new BrowserWindow({
-    ...clampBounds(savedBounds ?? defaultBounds(area()), area()), title: '月白しずく',
+    ...clampBounds(savedBounds ?? defaultBounds(area(), scale), area()), title: '月白しずく',
     transparent: true, backgroundColor: '#00000000', frame: false, hasShadow: false,
     resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
     focusable: false, skipTaskbar: true, alwaysOnTop: true, show: false,
@@ -312,7 +336,7 @@ async function start() {
   });
   ipcMain.handle('controls:status', event => {
     if (!trusted(event, controls, controlsUrl)) throw new Error('Denied sender');
-    return { model: modelPath ? path.basename(modelPath) : '', error: loadError, shortcuts, moving: moveMode, loaded: modelLoaded };
+    return { model: modelPath ? path.basename(modelPath) : '', error: loadError, shortcuts, moving: moveMode, loaded: modelLoaded, scale };
   });
   tray = new Tray(icon());
   tray.on('double-click', () => setVisible(!visible));
@@ -331,7 +355,7 @@ async function start() {
   if (!modelPath) openControls();
   if (process.env.SHIZUKU_METRICS === '1') {
     metricsTimer = setInterval(() => {
-      metricSamples.push({ time: new Date().toISOString(), visible, loaded: modelLoaded, processes: app.getAppMetrics() });
+      metricSamples.push({ time: new Date().toISOString(), visible, loaded: modelLoaded, scale, processes: app.getAppMetrics() });
       if (metricSamples.length > 1800) metricSamples.shift();
     }, 2000);
   }
@@ -340,12 +364,12 @@ async function start() {
     avatar: () => avatar, controls: () => controls, setVisible, reset, openControls, action,
     tray: () => tray, trayMenu: () => trayMenu,
     setMoveMode, moveState: () => ({ active: moveMode, revision: moveRevision, shape: moveShape, dragging: !!moveStart }),
-    status: () => ({ visible, modelLoaded, loadError, shortcuts }), metrics: () => app.getAppMetrics(),
+    setScale, status: () => ({ visible, modelLoaded, loadError, shortcuts, scale }), metrics: () => app.getAppMetrics(),
   };
 }
 
 app.setName('shizuku-desktop');
-app.setPath('userData', path.join(work, 'userdata'));
+app.setPath('userData', path.join(dataRoot, 'userdata'));
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (avatar) reset(); });
@@ -364,7 +388,7 @@ else {
     tray?.destroy(); tray = null; trayMenu = null;
     void (async () => {
       await save();
-      if (metricSamples.length) await writeFile(path.join(work, 'metrics.json'), JSON.stringify(metricSamples, null, 2));
+      if (metricSamples.length) await writeFile(path.join(dataRoot, 'metrics.json'), JSON.stringify(metricSamples, null, 2));
     })().catch(() => {}).finally(() => {
       quitFlushComplete = true;
       app.quit();

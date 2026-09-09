@@ -1,24 +1,73 @@
 export {};
-async function status() {
-  const value = await window.companion.getStatus();
-  document.querySelector('#model')!.textContent = value.model || 'モデル未選択';
-  document.querySelector('#error')!.textContent = value.error;
-  document.querySelector('#shortcuts')!.textContent = value.shortcuts ? '' : 'ショートカットを登録できませんでした。通知領域のアイコンから操作できます。';
-  const moveButton = document.querySelector<HTMLButtonElement>('#move-mode')!;
-  moveButton.textContent = value.moving ? '移動をやめる' : 'しずくをつかんで移動';
-  moveButton.disabled = !value.loaded;
-  moveButton.setAttribute('aria-pressed', String(value.moving));
-  document.querySelector('#move-hint')!.textContent = value.moving ? 'しずくをドラッグしてね。操作がなければ30秒で戻ります。' : '矢印でも位置を調整できます。';
+
+type CompanionStatus = Awaited<ReturnType<Window['companion']['getStatus']>>;
+type CompanionAction = Parameters<Window['companion']['action']>[0];
+const buttons = document.querySelectorAll<HTMLButtonElement>('button[data-action]');
+const sizes = document.querySelectorAll<HTMLInputElement>('input[name="size"]');
+const moveButton = document.querySelector<HTMLButtonElement>('#move-mode')!;
+let currentStatus: CompanionStatus | null = null;
+let busy = false;
+let requestVersion = 0;
+let operationError = '';
+
+function renderStatus(): void {
+  for (const button of buttons) {
+    button.disabled = busy || (button === moveButton && !currentStatus?.loaded);
+  }
+  for (const radio of sizes) {
+    radio.disabled = busy || currentStatus === null;
+    radio.checked = Number(radio.value) === currentStatus?.scale;
+  }
+  document.querySelector('#error')!.textContent = operationError || currentStatus?.error || '';
+  if (!currentStatus) return;
+  document.querySelector('#model')!.textContent = currentStatus.model || 'モデル未選択';
+  document.querySelector('#shortcuts')!.textContent = currentStatus.shortcuts ? '' : 'ショートカットを登録できませんでした。通知領域のアイコンから操作できます。';
+  moveButton.textContent = currentStatus.moving ? '移動をやめる' : 'しずくをつかんで移動';
+  moveButton.setAttribute('aria-pressed', String(currentStatus.moving));
+  document.querySelector('#move-hint')!.textContent = currentStatus.moving ? 'しずくをドラッグしてね。操作がなければ30秒で戻ります。' : '矢印でも位置を調整できます。';
 }
-document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach(button => {
-  button.addEventListener('click', async () => {
-    button.disabled = true;
-    try { await window.companion.action(button.dataset.action as Parameters<Window['companion']['action']>[0]); await status(); }
-    catch { document.querySelector('#error')!.textContent = '操作に失敗しました。通知領域のアイコンから終了・再起動できます。'; }
-    finally { button.disabled = false; }
+
+async function status(): Promise<void> {
+  const version = ++requestVersion;
+  try {
+    const value = await window.companion.getStatus();
+    if (version !== requestVersion) return;
+    currentStatus = value;
+  } catch {
+    if (version !== requestVersion) return;
+    operationError ||= '状態を確認できませんでした。通知領域のアイコンから終了・再起動できます。';
+  }
+  renderStatus();
+}
+
+async function perform(action: CompanionAction): Promise<void> {
+  if (busy) return;
+  busy = true;
+  operationError = '';
+  renderStatus();
+  try {
+    await window.companion.action(action);
+  } catch {
+    operationError = '操作に失敗しました。通知領域のアイコンから終了・再起動できます。';
+  } finally {
+    // Read the confirmed value before enabling input again. A failed resize also
+    // restores the previous radio selection; an unloaded model keeps Move disabled.
+    await status();
+    busy = false;
+    renderStatus();
+  }
+}
+
+for (const button of buttons) {
+  button.addEventListener('click', () => void perform(button.dataset.action as CompanionAction));
+}
+for (const radio of sizes) {
+  radio.addEventListener('change', () => {
+    if (radio.checked) void perform(radio.dataset.action as CompanionAction);
   });
-});
+}
+renderStatus();
 void status();
 const unsubscribe = window.companion.onStatusChanged(() => void status());
-window.addEventListener('beforeunload', unsubscribe, {once:true});
+window.addEventListener('beforeunload', unsubscribe, {once: true});
 window.addEventListener('focus', () => void status());

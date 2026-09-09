@@ -1,5 +1,11 @@
 const DEFAULT_WIDTH = 300;
 const DEFAULT_HEIGHT = 440;
+const SCALES = [80, 100, 120];
+
+/** Missing/old/corrupted saved preferences use the standard size. */
+export function normalizeScale(value) {
+  return SCALES.includes(value) ? value : 100;
+}
 
 function checkedWorkArea(workArea) {
   if (!workArea || !['x', 'y', 'width', 'height'].every(
@@ -45,11 +51,37 @@ export function clampBounds(bounds, workArea) {
   };
 }
 
-/** Start near the lower-right edge, leaving a small margin where space permits. */
-export function defaultBounds(workArea) {
+/** Fit a supported preset proportionally; at least one pixel survives per axis. */
+export function avatarSize(scale, workArea) {
+  if (!SCALES.includes(scale)) throw new TypeError('Avatar scale must be 80, 100, or 120.');
   const area = checkedWorkArea(workArea);
-  const width = Math.min(DEFAULT_WIDTH, area.width);
-  const height = Math.min(DEFAULT_HEIGHT, area.height);
+  const width = DEFAULT_WIDTH * scale / 100;
+  const height = DEFAULT_HEIGHT * scale / 100;
+  const fit = Math.min(1, area.width / width, area.height / height);
+  return {
+    width: Math.max(1, Math.min(area.width, Math.floor(width * fit))),
+    height: Math.max(1, Math.min(area.height, Math.floor(height * fit))),
+  };
+}
+
+/** Preserve the lower-center anchor, then recover the complete window at edges. */
+export function resizeAvatarBounds(bounds, scale, workArea) {
+  const area = checkedWorkArea(workArea);
+  const { width, height } = avatarSize(scale, area);
+  const previousWidth = dimension(bounds?.width, DEFAULT_WIDTH, area.width);
+  const previousHeight = dimension(bounds?.height, DEFAULT_HEIGHT, area.height);
+  return clampBounds({
+    x: finiteOr(bounds?.x, area.x) + (previousWidth - width) / 2,
+    y: finiteOr(bounds?.y, area.y) + previousHeight - height,
+    width,
+    height,
+  }, area);
+}
+
+/** Start near the lower-right edge, preserving the selected size and margins. */
+export function defaultBounds(workArea, scale = 100) {
+  const area = checkedWorkArea(workArea);
+  const { width, height } = avatarSize(scale, area);
   return clampBounds({
     x: area.x + area.width - width - 24,
     y: area.y + area.height - height - 12,

@@ -5,6 +5,7 @@
 <body class="controls">
 <div class="row"><button id="move-mode" data-action="move-mode">しずくをつかんで移動</button></div>
 <p class="hint" id="move-hint" role="status">矢印でも位置を調整できます。</p>
+<fieldset class="size-options"><legend>大きさ</legend><div class="size-choices"><label><input type="radio" name="size" value="80" data-action="size-small">小</label><label><input type="radio" name="size" value="100" data-action="size-standard">標準</label><label><input type="radio" name="size" value="120" data-action="size-large">大</label></div></fieldset>
 <div class="arrows"><button data-action="up" aria-label="上へ">↑</button><div><button data-action="left" aria-label="左へ">←</button><button data-action="down" aria-label="下へ">↓</button><button data-action="right" aria-label="右へ">→</button></div></div>
 <div class="row"><button data-action="reset">画面端に戻す</button><button data-action="hide">隠す</button><button data-action="show">表示</button></div>
 <details><summary>モデルと操作</summary><p id="model"></p><button data-action="choose-model">VRMを選ぶ…</button><p>Ctrl + Alt + Shift + M：つかんで移動／取消<br>Ctrl + Alt + Shift + S：隠す／戻す<br>Ctrl + Alt + Shift + R：画面端に戻す<br>Ctrl + Alt + Shift + Q：終了</p><p id="shortcuts"></p><button data-action="quit">終了</button></details>

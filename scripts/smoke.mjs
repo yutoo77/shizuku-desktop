@@ -2,19 +2,30 @@
 import { _electron } from 'playwright';
 import electron from 'electron';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 await mkdir(path.join(root, 'work'), {recursive:true});
+const userConfigBefore = await readFile(path.join(root, 'local.config.json'), 'utf8');
+const userConfig = JSON.parse(userConfigBefore.replace(/^\uFEFF/, ''));
+const testDirectory = await mkdtemp(path.join(root, 'work', 'smoke-'));
+const testConfigPath = path.join(testDirectory, 'local.config.json');
+// Seed a legacy config with invalid dimensions: migration must derive size from preferences.
+await writeFile(testConfigPath, JSON.stringify({modelPath:userConfig.modelPath,bounds:{x:500,y:300,width:9999,height:9999}}));
+const launch = () => _electron.launch({executablePath:electron,args:[root],cwd:root,
+  env:{...process.env,SHIZUKU_TEST:'1',SHIZUKU_TEST_DATA:path.basename(testDirectory)}});
 const results = [];
 let application;
 try {
-  application = await _electron.launch({executablePath:electron,args:[root],cwd:root,env:{...process.env,SHIZUKU_TEST:'1'}});
+  application = await launch();
   const page = await application.firstWindow();
   await page.waitForFunction(()=>window.__diagnostics?.loaded, null, {timeout:20000});
   const inspect = fn => application.evaluate(fn);
+  assert.equal(await inspect(()=>globalThis.__shizuku.status().scale),100);
+  assert.deepEqual(await inspect(()=>globalThis.__shizuku.avatar().getBounds()),{x:500,y:300,width:300,height:440});
+  results.push('Legacy configuration migrates to standard size and rejects saved arbitrary dimensions');
   assert.equal(await inspect(()=>globalThis.__shizuku.avatar().isFocusable()),false);
   assert.equal(await inspect(()=>globalThis.__shizuku.avatar().isAlwaysOnTop()),true);
   assert.equal(await page.evaluate(()=>typeof window.require),'undefined');
@@ -132,6 +143,51 @@ try {
   assert.equal(modelAccess,false);
   const moveAccess=await control.evaluate(async()=>{try{await window.companion.submitMoveShape(1,[{x:0,y:0,width:1,height:1}]);return true;}catch{return false;}});
   assert.equal(moveAccess,false);
+  const sizeAccess=await page.evaluate(async()=>{try{await window.companion.action('size-small');return true;}catch{return false;}});
+  assert.equal(sizeAccess,false);
+  await assert.rejects(inspect(()=>globalThis.__shizuku.setScale(999)));
+  for (const [label,scale,width,height] of [['小',80,240,352],['大',120,360,528],['標準',100,300,440]]) {
+    await inspect(()=>globalThis.__shizuku.setScale(100));
+    await page.waitForFunction(()=>innerWidth===300 && innerHeight===440);
+    await delay(50);
+    await inspect(()=>globalThis.__shizuku.avatar().setPosition(500,300));
+    await control.getByRole('radio',{name:label,exact:true}).check();
+    await page.waitForFunction(({width,height})=>innerWidth===width && innerHeight===height,{width,height});
+    await delay(100);
+    const sized=await inspect(()=>({bounds:globalThis.__shizuku.avatar().getBounds(),scale:globalThis.__shizuku.status().scale}));
+    assert.deepEqual(sized,{bounds:{x:650-width/2,y:740-height,width,height},scale});
+    const shape=await armMove();
+    const imageSize=await inspect(async()=> (await globalThis.__shizuku.avatar().webContents.capturePage()).getSize());
+    assert.deepEqual(imageSize,{width,height});
+    assert.ok(shape.shape.every(r=>r.x+r.width<=width && r.y+r.height<=height));
+    await inspect(()=>globalThis.__shizuku.reset());
+    const returned=await inspect(({screen})=>({bounds:globalThis.__shizuku.avatar().getBounds(),area:screen.getPrimaryDisplay().workArea,scale:globalThis.__shizuku.status().scale}));
+    assert.equal(returned.scale,scale);
+    assert.deepEqual(returned.bounds,{x:returned.area.x+returned.area.width-width-24,y:returned.area.y+returned.area.height-height-12,width,height});
+  }
+  results.push('All three size radios preserve the bottom-center anchor, fit native rendering/shape, and keep their size on recovery');
+
+  move=await armMove();
+  await control.getByRole('radio',{name:'小',exact:true}).check();
+  assert.equal(await inspect(()=>globalThis.__shizuku.moveState().active),false);
+  assert.equal(await page.evaluate(({revision,shape})=>window.companion.submitMoveShape(revision,shape),{revision:move.revision,shape:move.shape}),false);
+  await inspect(()=>globalThis.__shizuku.setVisible(false));
+  await delay(200);
+  const sizeHiddenFrames=await page.evaluate(()=>window.__diagnostics.renderedFrames);
+  await control.getByRole('radio',{name:'大',exact:true}).check();
+  await delay(250);
+  assert.equal(await inspect(()=>globalThis.__shizuku.avatar().isVisible()),false);
+  assert.equal(await page.evaluate(()=>window.__diagnostics.renderedFrames),sizeHiddenFrames);
+  await inspect(()=>globalThis.__shizuku.setVisible(true));
+  await page.waitForFunction(()=>innerWidth===360 && innerHeight===528);
+  await page.waitForFunction(n=>window.__diagnostics.renderedFrames>n,sizeHiddenFrames);
+  results.push('Size change cancels old move regions; hidden resizing does not reveal or animate the avatar; show resumes');
+  await control.getByRole('radio',{name:'標準',exact:true}).check();
+  const preventedBounds=await inspect(()=>globalThis.__shizuku.avatar().getBounds());
+  await page.evaluate(()=>{window.resizeTo(1000,1000);window.moveTo(-9999,-9999);});
+  await delay(100);
+  assert.deepEqual(await inspect(()=>globalThis.__shizuku.avatar().getBounds()),preventedBounds);
+  results.push('Renderer cannot bypass size/location policy with browser window move/resize APIs');
   await control.getByRole('button',{name:'画面端に戻す',exact:true}).click();
   await delay(200);
   const before=await inspect(()=>globalThis.__shizuku.avatar().getBounds());
@@ -188,6 +244,7 @@ try {
   assert.equal(await page.evaluate(()=>window.__diagnostics.moving),false);
   results.push('An abandoned move mode releases its native input region after 30 seconds');
   const diagnostics=await page.evaluate(()=>window.__diagnostics);
+  await inspect(()=>globalThis.__shizuku.setScale(80));
   await armMove();
   await inspect(()=>globalThis.__shizuku.avatar().webContents.forcefullyCrashRenderer());
   await delay(500);
@@ -203,6 +260,21 @@ try {
   const remaining=pids.filter(pid=>{try{process.kill(pid,0);return true;}catch{return false;}});
   assert.deepEqual(remaining,[]);
   results.push('Tray menu exit callback flushes state and all recorded app processes exit');
+  const savedConfig=JSON.parse(await readFile(testConfigPath,'utf8'));
+  assert.equal(savedConfig.scale,80);
+  assert.equal(savedConfig.bounds.width,240);
+  assert.equal(savedConfig.bounds.height,352);
+  application=await launch();
+  const restarted=await application.firstWindow();
+  await restarted.waitForFunction(()=>window.__diagnostics?.loaded);
+  assert.equal(await inspect(()=>globalThis.__shizuku.status().scale),80);
+  assert.deepEqual(await inspect(()=>globalThis.__shizuku.avatar().getBounds()),savedConfig.bounds);
+  const restartPids=(await inspect(()=>globalThis.__shizuku.metrics())).map(p=>p.pid);
+  await application.close();application=null;
+  await delay(750);
+  assert.deepEqual(restartPids.filter(pid=>{try{process.kill(pid,0);return true;}catch{return false;}}),[]);
+  assert.equal(await readFile(path.join(root,'local.config.json'),'utf8'),userConfigBefore);
+  results.push('Chosen size and position survive restart; all processes exit; isolated tests leave user settings unchanged');
   await writeFile(path.join(root,'work/smoke.json'),JSON.stringify({date:new Date().toISOString(),results,bitmap,recovery,diagnostics,remaining},null,2));
   console.log(JSON.stringify({passed:results.length,results},null,2));
 } finally { if(application) await application.close(); }

@@ -10,8 +10,8 @@ declare global {
       onMoveMode(callback: (state: {active: boolean; revision: number}) => void): () => void;
       submitMoveShape(revision: number, rects: Array<{x: number; y: number; width: number; height: number}>): Promise<boolean>;
       movePointer(revision: number, kind: 'start'|'move'|'end'|'cancel', point?: {x: number; y: number}): void;
-      action(action: 'show'|'hide'|'reset'|'choose-model'|'quit'|'left'|'right'|'up'|'down'|'move-mode'): Promise<void>;
-      getStatus(): Promise<{model: string; error: string; shortcuts: boolean; moving: boolean; loaded: boolean}>;
+      action(action: 'show'|'hide'|'reset'|'choose-model'|'quit'|'left'|'right'|'up'|'down'|'move-mode'|'size-small'|'size-standard'|'size-large'): Promise<void>;
+      getStatus(): Promise<{model: string; error: string; shortcuts: boolean; moving: boolean; loaded: boolean; scale: number}>;
     };
   }
 }
