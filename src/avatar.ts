@@ -7,6 +7,7 @@ import { GLTFLoader, type GLTFParser } from 'three/addons/loaders/GLTFLoader.js'
 import { VRMHumanBoneName, VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
 import { rgbaToShape } from './move-policy.mjs';
 import { CALL_RESPONSE_MS, callExpression, sampleCallResponse } from './call-response.mjs';
+import { ModelImages, trackModelImages } from './model-images';
 
 export interface AvatarDiagnostics {
   loaded: boolean;
@@ -40,6 +41,7 @@ export class Avatar {
   private readonly rotation = new Quaternion();
   private readonly motion = matchMedia('(prefers-reduced-motion: reduce)');
   private vrm: VRM | null = null;
+  private modelImages: ModelImages | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private reactionTimer: ReturnType<typeof setTimeout> | null = null;
   private reactionStarted: number | null = null;
@@ -90,10 +92,13 @@ export class Avatar {
   public async load(buffer: ArrayBuffer): Promise<boolean> {
     this.clear();
     const version = this.loadVersion;
+    const images = new ModelImages();
+    this.modelImages = images;
     const started = performance.now();
-    const vrm = await parseModel(buffer);
+    const vrm = await parseModel(buffer, images);
     if (this.disposed || version !== this.loadVersion) {
       VRMUtils.deepDispose(vrm.scene);
+      images.dispose();
       return false;
     }
     try {
@@ -149,6 +154,8 @@ export class Avatar {
       VRMUtils.deepDispose(this.vrm.scene);
       this.vrm = null;
     }
+    this.modelImages?.dispose();
+    this.modelImages = null;
     this.bones.clear();
     this.blinkNames = [];
     this.reactionExpression = null;
@@ -374,7 +381,7 @@ export class Avatar {
   }
 }
 
-async function parseModel(buffer: ArrayBuffer): Promise<VRM> {
+async function parseModel(buffer: ArrayBuffer, images: ModelImages): Promise<VRM> {
   const manager = new LoadingManager();
   manager.setURLModifier(url => {
     if (url.startsWith('data:') || url.startsWith('blob:')) return url;
@@ -385,6 +392,7 @@ async function parseModel(buffer: ArrayBuffer): Promise<VRM> {
   let parsedScene: Object3D | null = null;
   loader.register(parser => {
     parsers.push(parser);
+    trackModelImages(parser, images);
     return {
       name: 'LocalEmbeddedResourcesOnly',
       beforeRoot: async () => {
@@ -412,6 +420,7 @@ async function parseModel(buffer: ArrayBuffer): Promise<VRM> {
     VRMUtils.rotateVRM0(vrm);
     return vrm;
   } catch (error) {
+    images.dispose();
     if (parsedScene) VRMUtils.deepDispose(parsedScene);
     else {
       // Parsing can fail before a root scene is produced; release available partial

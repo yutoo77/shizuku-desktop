@@ -10,7 +10,9 @@
     "test": "node --test tests/*.test.mjs",
     "check": "npm run typecheck && npm test && npm run build",
     "start": "npm run build && electron .",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "soak": "node scripts/soak.mjs",
+    "test:resources": "node scripts/resources.mjs"
   },
   "engines": {
     "node": ">=24.0.0"
