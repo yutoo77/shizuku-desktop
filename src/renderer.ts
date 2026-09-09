@@ -16,9 +16,11 @@ let moveActive = false;
 let moveRevision = 0;
 let moveEnding = false;
 let pointerId: number | null = null;
+let pendingCall: { revision: number; expires: number } | null = null;
 const unsubscribers: Array<() => void> = [];
 
 function reportError(error: unknown): void {
+  pendingCall = null;
   cancelMoveMode();
   const message = error instanceof Error ? error.message : 'モデルを表示できませんでした。';
   if (avatar) avatar.diagnostics.error = message;
@@ -26,6 +28,7 @@ function reportError(error: unknown): void {
 }
 
 async function reload(): Promise<void> {
+  pendingCall = null;
   const current = ++revision;
   cancelMoveMode();
   avatar?.clear();
@@ -45,8 +48,23 @@ async function reload(): Promise<void> {
 }
 
 function updateVisibility(): void {
+  if (!windowVisible) pendingCall = null;
   if (!windowVisible || document.hidden) cancelMoveMode();
   avatar?.setVisible(windowVisible && !document.hidden);
+  tryStartCall();
+}
+
+function tryStartCall(): void {
+  if (!pendingCall) return;
+  if (disposed || pendingCall.revision !== revision || Date.now() > pendingCall.expires) {
+    pendingCall = null;
+    return;
+  }
+  // Native showInactive and document.visibilitychange can arrive separately.
+  // Retain only one brief request until the page is ready to draw it.
+  if (!windowVisible || document.hidden || moveActive || !avatar?.diagnostics.loaded) return;
+  pendingCall = null;
+  avatar.call();
 }
 
 function releasePointer(): void {
@@ -86,6 +104,7 @@ async function updateMoveMode(state: {active: boolean; revision: number}): Promi
   clearMoveMode();
   moveRevision = state.revision;
   if (!state.active) return;
+  pendingCall = null;
   moveActive = true;
   const current = moveRevision;
   try {
@@ -147,6 +166,11 @@ try {
     updateVisibility();
   }));
   unsubscribers.push(window.companion.onModelChanged(() => { void reload(); }));
+  unsubscribers.push(window.companion.onCalled(expiresAt => {
+    if (disposed || !windowVisible || !avatar?.diagnostics.loaded || !Number.isFinite(expiresAt)) return;
+    pendingCall = { revision, expires: expiresAt };
+    tryStartCall();
+  }));
   unsubscribers.push(window.companion.onMoveMode(state => { void updateMoveMode(state); }));
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);
@@ -165,6 +189,7 @@ try {
 window.addEventListener('beforeunload', () => {
   cancelMoveMode();
   disposed = true;
+  pendingCall = null;
   avatar?.setVisible(false);
   clearMoveMode();
   revision += 1;

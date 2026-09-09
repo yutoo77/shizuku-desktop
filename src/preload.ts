@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('companion', {
   getModel: () => ipcRenderer.invoke('model:read'),
+  onCalled: (callback: (expiresAt: number) => void) => {
+    const listener = (_event: unknown, expiresAt: number) => callback(expiresAt);
+    ipcRenderer.on('avatar:called', listener);
+    return () => ipcRenderer.removeListener('avatar:called', listener);
+  },
   onMoveMode: (callback: (state: {active: boolean; revision: number}) => void) => {
     const listener = (_event: unknown, state: {active: boolean; revision: number}) => callback(state);
     ipcRenderer.on('avatar:move-mode', listener);

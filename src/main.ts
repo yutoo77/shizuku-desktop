@@ -98,6 +98,13 @@ function reset() {
   placeAvatar(defaultBounds(area(), scale));
   saveSoon();
 }
+function callAvatar() {
+  if (quitting || !avatar || avatar.isDestroyed()) return;
+  if (!modelLoaded) { openControls(); return; }
+  setMoveMode(false);
+  if (!visible) setVisible(true);
+  avatar.webContents.send('avatar:called', Date.now() + 1000);
+}
 function setScale(value: unknown) {
   if (typeof value !== 'number' || ![80, 100, 120].includes(value)) throw new Error('Unknown size');
   if (quitting || !avatar || avatar.isDestroyed() || value === scale) return;
@@ -176,6 +183,7 @@ function updateMenu() {
   trayMenu = Menu.buildFromTemplate([
     { label: '月白 しずく', enabled: false },
     ...(loadError ? [{ label: loadError.slice(0, 65), enabled: false }] : []),
+    { label: '呼ぶ', enabled: modelLoaded, click: callAvatar },
     { label: visible ? '隠す' : '表示する', click: () => setVisible(!visible) },
     { label: moveMode ? '移動をやめる' : 'しずくをつかんで移動', enabled: modelLoaded, click: () => setMoveMode(!moveMode) },
     { label: '位置を動かす…', click: openControls },
@@ -196,7 +204,7 @@ function openControls() {
   if (quitting) return;
   if (controls && !controls.isDestroyed()) { controls.show(); controls.focus(); return; }
   const win = new BrowserWindow({
-    width: 360, height: 480, title: 'しずくの位置', resizable: false,
+    width: 360, height: 480, title: 'しずく', resizable: false,
     backgroundColor: '#f8fbff', autoHideMenuBar: true, icon: icon(),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, spellcheck: false },
   });
@@ -259,6 +267,7 @@ async function action(value: string) {
   if (value === 'show') setVisible(true);
   else if (value === 'hide') setVisible(false);
   else if (value === 'reset') reset();
+  else if (value === 'call') callAvatar();
   else if (value === 'choose-model') await chooseModel();
   else if (value === 'move-mode') setMoveMode(!moveMode);
   else if (value === 'size-small') setScale(80);
@@ -343,6 +352,7 @@ async function start() {
   const bindings: Array<[string, () => void]> = [
     ['CommandOrControl+Alt+Shift+S', () => setVisible(!visible)],
     ['CommandOrControl+Alt+Shift+R', reset],
+    ['CommandOrControl+Alt+Shift+C', callAvatar],
     ['CommandOrControl+Alt+Shift+M', () => setMoveMode(!moveMode)],
     ['CommandOrControl+Alt+Shift+Q', () => app.quit()],
   ];

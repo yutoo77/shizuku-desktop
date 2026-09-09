@@ -6,6 +6,7 @@ import {
 import { GLTFLoader, type GLTFParser } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMHumanBoneName, VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
 import { rgbaToShape } from './move-policy.mjs';
+import { CALL_RESPONSE_MS, callExpression, sampleCallResponse } from './call-response.mjs';
 
 export interface AvatarDiagnostics {
   loaded: boolean;
@@ -13,6 +14,8 @@ export interface AvatarDiagnostics {
   animating: boolean;
   reducedMotion: boolean;
   moving: boolean;
+  reacting: boolean;
+  reactionProgress: number;
   renderedFrames: number;
   fps: number;
   modelName: string | null;
@@ -38,6 +41,10 @@ export class Avatar {
   private readonly motion = matchMedia('(prefers-reduced-motion: reduce)');
   private vrm: VRM | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private reactionTimer: ReturnType<typeof setTimeout> | null = null;
+  private reactionStarted: number | null = null;
+  private reactionExpression: string | null = null;
+  private reactionExpressionRest = 0;
   private visible = true;
   private moving = false;
   private disposed = false;
@@ -52,6 +59,7 @@ export class Avatar {
 
   public readonly diagnostics: AvatarDiagnostics = {
     loaded: false, visible: true, animating: false, reducedMotion: false, moving: false,
+    reacting: false, reactionProgress: 0,
     renderedFrames: 0, fps: 0, modelName: null, triangles: 0, drawCalls: 0,
     geometries: 0, textures: 0, loadTimeMs: null, pixelRatio: 1, error: null,
   };
@@ -99,6 +107,7 @@ export class Avatar {
       this.pose(VRMHumanBoneName.LeftUpperArm, 0, 0, -Math.PI * 0.4);
       this.pose(VRMHumanBoneName.RightUpperArm, 0, 0, Math.PI * 0.4);
       const expressions = Object.keys(vrm.expressionManager?.expressionMap ?? {});
+      this.reactionExpression = callExpression(expressions);
       this.blinkNames = expressions.includes('blink') ? ['blink']
         : expressions.filter(name => name === 'blinkLeft' || name === 'blinkRight');
       vrm.update(0);
@@ -132,6 +141,7 @@ export class Avatar {
   public clear(): void {
     this.loadVersion += 1;
     this.pause();
+    this.cancelReaction();
     this.moving = false;
     this.diagnostics.moving = false;
     if (this.vrm) {
@@ -141,6 +151,7 @@ export class Avatar {
     }
     this.bones.clear();
     this.blinkNames = [];
+    this.reactionExpression = null;
     this.elapsed = 0;
     this.modelWidth = 0;
     this.modelHeight = 0;
@@ -163,7 +174,35 @@ export class Avatar {
       if (!this.vrm && !this.disposed) this.renderer.clear();
       this.resume();
     }
-    else this.pause();
+    else {
+      this.pause();
+      this.cancelReaction();
+    }
+  }
+
+  /** Accept one short response; repeated calls never queue or prolong it. */
+  public call(): boolean {
+    if (this.disposed || !this.visible || this.moving || !this.vrm || this.reactionStarted !== null) return false;
+    this.reactionExpressionRest = this.reactionExpression
+      ? this.vrm.expressionManager?.getValue(this.reactionExpression) ?? 0 : 0;
+    this.reactionStarted = performance.now();
+    this.diagnostics.reacting = true;
+    this.diagnostics.reactionProgress = 0;
+    if (this.motion.matches) {
+      // Preserve the still bones and spring state. Only the expression is applied,
+      // then one timer restores it; reduced motion never starts a render loop.
+      this.applyReactionExpression(0.18);
+      this.vrm.expressionManager?.update();
+      this.renderCurrentFrame();
+      this.reactionTimer = setTimeout(() => {
+        this.reactionTimer = null;
+        this.cancelReaction(true);
+        if (this.disposed || !this.visible || this.moving || !this.vrm) return;
+        this.vrm.expressionManager?.update();
+        this.renderCurrentFrame();
+      }, CALL_RESPONSE_MS);
+    } else this.resume();
+    return true;
   }
 
   /** Snapshot only our canvas, once, while its displayed pose stays frozen. */
@@ -172,6 +211,9 @@ export class Avatar {
       throw new Error('しずくが表示されてから、もう一度試してください。');
     }
     this.pause();
+    // Cancel pending work without updating the frozen bones/morph targets. The
+    // snapshot below keeps matching the exact displayed pose throughout dragging.
+    this.cancelReaction();
     this.moving = true;
     this.diagnostics.moving = true;
     // Do not call draw(0): even a zero delta would update bones, expressions and
@@ -214,6 +256,7 @@ export class Avatar {
   private readonly onMotionChanged = (): void => {
     this.diagnostics.reducedMotion = this.motion.matches;
     this.pause();
+    this.cancelReaction();
     this.resume();
   };
 
@@ -254,6 +297,22 @@ export class Avatar {
     this.diagnostics.fps = 0;
   }
 
+  private applyReactionExpression(amount: number): void {
+    if (this.reactionExpression) {
+      const value = this.reactionExpressionRest + (1 - this.reactionExpressionRest) * amount;
+      this.vrm?.expressionManager?.setValue(this.reactionExpression, value);
+    }
+  }
+
+  private cancelReaction(completed = false): void {
+    if (this.reactionTimer !== null) clearTimeout(this.reactionTimer);
+    this.reactionTimer = null;
+    if (this.reactionStarted !== null) this.applyReactionExpression(0);
+    this.reactionStarted = null;
+    this.diagnostics.reacting = false;
+    this.diagnostics.reactionProgress = completed ? 1 : 0;
+  }
+
   private readonly tick = (): void => {
     this.timer = null;
     if (this.disposed || !this.visible || this.moving || !this.vrm || this.motion.matches) return;
@@ -276,8 +335,18 @@ export class Avatar {
     const vrm = this.vrm;
     if (!vrm) return;
     const time = this.motion.matches ? 0 : this.elapsed;
-    this.pose(VRMHumanBoneName.Head, Math.sin(time * 0.53) * 0.008,
-      Math.sin(time * 0.23) * 0.025, Math.sin(time * 0.31) * 0.012);
+    let nod = 0;
+    let turn = 0;
+    let tilt = 0;
+    if (this.reactionStarted !== null && !this.motion.matches) {
+      const reaction = sampleCallResponse(performance.now() - this.reactionStarted);
+      this.diagnostics.reactionProgress = reaction.progress;
+      ({ nod, turn, tilt } = reaction);
+      this.applyReactionExpression(reaction.expression);
+      if (reaction.done) this.cancelReaction(true);
+    }
+    this.pose(VRMHumanBoneName.Head, Math.sin(time * 0.53) * 0.008 + nod,
+      Math.sin(time * 0.23) * 0.025 + turn, Math.sin(time * 0.31) * 0.012 + tilt);
     this.pose(VRMHumanBoneName.Chest, Math.sin(time * 1.35) * 0.004, 0, 0);
     const blinkPhase = (time + 1.8) % 5.6;
     const blink = !this.motion.matches && blinkPhase < 0.18

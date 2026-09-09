@@ -5,6 +5,7 @@ type CompanionAction = Parameters<Window['companion']['action']>[0];
 const buttons = document.querySelectorAll<HTMLButtonElement>('button[data-action]');
 const sizes = document.querySelectorAll<HTMLInputElement>('input[name="size"]');
 const moveButton = document.querySelector<HTMLButtonElement>('#move-mode')!;
+const callButton = document.querySelector<HTMLButtonElement>('#call')!;
 let currentStatus: CompanionStatus | null = null;
 let busy = false;
 let requestVersion = 0;
@@ -12,7 +13,7 @@ let operationError = '';
 
 function renderStatus(): void {
   for (const button of buttons) {
-    button.disabled = busy || (button === moveButton && !currentStatus?.loaded);
+    button.disabled = busy || ((button === moveButton || button === callButton) && !currentStatus?.loaded);
   }
   for (const radio of sizes) {
     radio.disabled = busy || currentStatus === null;
