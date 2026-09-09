@@ -67,20 +67,54 @@ try {
   results.push('Control nudge moves native window; cross-window IPC denied');
   await inspect(()=>globalThis.__shizuku.controls().close());
 
+  const pressTray = async label => {
+    await application.evaluate((_electron, text)=>{
+      const item=globalThis.__shizuku.trayMenu().items.find(i=>i.label===text);
+      if(!item)throw new Error(`Missing tray item: ${text}`);
+      item.click();
+    },label);
+    await delay(50);
+  };
+  assert.equal(await inspect(()=>globalThis.__shizuku.tray().isDestroyed()),false);
+  await pressTray('隠す');
+  assert.equal(await inspect(()=>globalThis.__shizuku.avatar().isVisible()),false);
+  await pressTray('表示する');
+  assert.equal(await inspect(()=>globalThis.__shizuku.avatar().isVisible()),true);
+  await inspect(()=>globalThis.__shizuku.tray().emit('double-click'));
+  assert.equal(await inspect(()=>globalThis.__shizuku.avatar().isVisible()),false);
+  await inspect(()=>globalThis.__shizuku.tray().emit('double-click'));
+  assert.equal(await inspect(()=>globalThis.__shizuku.avatar().isVisible()),true);
+  await pressTray('位置を動かす…');
+  await inspect(()=>{const s=globalThis.__shizuku;s.controls().close();s.openControls();});
+  await delay(150);
+  assert.equal(await inspect(()=>!!globalThis.__shizuku.controls()),true,'Rapid close/reopen must not reuse a closing controls window');
+  await inspect(({dialog})=>{
+    globalThis.__originalOpenDialog=dialog.showOpenDialog;
+    dialog.showOpenDialog=async()=>({canceled:true,filePaths:[]});
+    globalThis.__shizuku.trayMenu().items.find(i=>i.label==='VRMを選ぶ…').click();
+  });
+  await delay(200);
+  assert.equal(await inspect(()=>globalThis.__shizuku.status().modelLoaded),true);
+  assert.equal(await inspect(()=>!!globalThis.__shizuku.controls()),true,'New controls survive the previous controls close event');
+  await inspect(({dialog})=>{dialog.showOpenDialog=globalThis.__originalOpenDialog;delete globalThis.__originalOpenDialog;globalThis.__shizuku.controls().close();});
+  results.push('Actual Electron tray menu callbacks hide/show/open controls; double-click event toggles; model-dialog cancel preserves model (not physical input)');
+
   await inspect(()=>globalThis.__shizuku.avatar().setPosition(-9000,-9000));
   await delay(150);
-  await inspect(()=>globalThis.__shizuku.reset());
+  await inspect(()=>globalThis.__shizuku.trayMenu().items.find(i=>i.label==='画面端に戻す').click());
   await delay(300);
   const recovery=await inspect(({screen})=>({actual:globalThis.__shizuku.avatar().getBounds(),area:screen.getPrimaryDisplay().workArea}));
   assert.deepEqual(recovery.actual,{x:recovery.area.x+recovery.area.width-300-24,y:recovery.area.y+recovery.area.height-440-12,width:300,height:440});
   results.push('Recovery restores fixed 300x440 size and primary-screen margins after distant offscreen position');
   const diagnostics=await page.evaluate(()=>window.__diagnostics);
   const pids=(await inspect(()=>globalThis.__shizuku.metrics())).map(p=>p.pid);
-  await application.close();application=null;
+  const closed=application.waitForEvent('close');
+  await inspect(()=>{globalThis.__shizuku.trayMenu().items.find(i=>i.label==='終了').click();});
+  await closed;application=null;
   await delay(1000);
   const remaining=pids.filter(pid=>{try{process.kill(pid,0);return true;}catch{return false;}});
   assert.deepEqual(remaining,[]);
-  results.push('All recorded app processes exit');
+  results.push('Tray menu exit callback flushes state and all recorded app processes exit');
   await writeFile(path.join(root,'work/smoke.json'),JSON.stringify({date:new Date().toISOString(),results,bitmap,recovery,diagnostics,remaining},null,2));
   console.log(JSON.stringify({passed:results.length,results},null,2));
 } finally { if(application) await application.close(); }

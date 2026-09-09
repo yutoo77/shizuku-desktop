@@ -14,6 +14,7 @@ const controlsUrl = pathToFileURL(path.join(__dirname, 'controls.html')).href;
 let avatar: BrowserWindow | null = null;
 let controls: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let trayMenu: Menu | null = null;
 let modelPath = '';
 let savedBounds: Rectangle | undefined;
 let loadError = '';
@@ -104,7 +105,7 @@ function icon() {
 }
 function updateMenu() {
   if (controls && !controls.isDestroyed()) controls.webContents.send('controls:changed');
-  tray?.setContextMenu(Menu.buildFromTemplate([
+  trayMenu = Menu.buildFromTemplate([
     { label: '月白 しずく', enabled: false },
     ...(loadError ? [{ label: loadError.slice(0, 65), enabled: false }] : []),
     { label: visible ? '隠す' : '表示する', click: () => setVisible(!visible) },
@@ -113,28 +114,32 @@ function updateMenu() {
     { type: 'separator' as const },
     { label: 'VRMを選ぶ…', click: () => void chooseModel() },
     { label: '終了', click: () => app.quit() },
-  ]));
+  ]);
+  tray?.setContextMenu(trayMenu);
   tray?.setToolTip(`月白しずく — ${loadError || (visible ? '表示中' : '非表示')}`);
 }
 function openControls() {
   if (quitting) return;
   if (controls && !controls.isDestroyed()) { controls.show(); controls.focus(); return; }
-  controls = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 360, height: 480, title: 'しずくの位置', resizable: false,
     backgroundColor: '#f8fbff', autoHideMenuBar: true, icon: icon(),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, spellcheck: false },
   });
-  secureWindow(controls);
-  let previous = controls.getBounds();
-  controls.on('move', () => {
-    if (quitting || !controls || !avatar) return;
-    const next = controls.getBounds();
+  controls = win;
+  secureWindow(win);
+  let previous = win.getBounds();
+  win.on('move', () => {
+    if (quitting || controls !== win || win.isDestroyed() || !avatar) return;
+    const next = win.getBounds();
     placeAvatar(followControlMove(avatarBounds(avatar), previous, next, area()));
     previous = next;
     saveSoon();
   });
-  controls.on('closed', () => { controls = null; });
-  void controls.loadURL(controlsUrl);
+  // An older window can finish closing after its replacement has opened.
+  win.on('close', () => { if (controls === win) controls = null; });
+  win.on('closed', () => { if (controls === win) controls = null; });
+  void win.loadURL(controlsUrl);
 }
 async function chooseModel() {
   if (choosing || quitting) return;
@@ -255,6 +260,7 @@ async function start() {
   // Development-only inspection inside the main process; not exposed through IPC.
   if (process.env.SHIZUKU_TEST === '1') (globalThis as any).__shizuku = {
     avatar: () => avatar, controls: () => controls, setVisible, reset, openControls, action,
+    tray: () => tray, trayMenu: () => trayMenu,
     status: () => ({ visible, modelLoaded, loadError, shortcuts }), metrics: () => app.getAppMetrics(),
   };
 }
@@ -274,7 +280,7 @@ else {
     clearInterval(metricsTimer);
     clearTimeout(saveTimer);
     globalShortcut.unregisterAll();
-    tray?.destroy(); tray = null;
+    tray?.destroy(); tray = null; trayMenu = null;
     void (async () => {
       await save();
       if (metricSamples.length) await writeFile(path.join(work, 'metrics.json'), JSON.stringify(metricSamples, null, 2));
