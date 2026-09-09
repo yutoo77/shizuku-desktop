@@ -1,0 +1,17 @@
+:root { color-scheme: light; font: 14px/1.65 'Yu Gothic UI', 'Meiryo', sans-serif; color: #243653; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+body.avatar, .avatar canvas { width: 100vw; height: 100vh; display: block; overflow: hidden; background: transparent; pointer-events: none; }
+body.controls { background: #f8fbff; padding: 18px 20px; }
+p { margin: 0 0 12px; }
+.hint { color: #415573; }
+button { font: inherit; color: #243f6a; border: 1px solid #b9cbe2; background: #fff; border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+button:hover { background: #edf4ff; }
+button:focus-visible, summary:focus-visible { outline: 2px solid #3c71bc; outline-offset: 3px; }
+.arrows { text-align: center; margin-bottom: 14px; }
+.arrows button { min-width: 44px; margin: 3px; }
+.row { display: flex; justify-content: center; gap: 7px; }
+details { margin-top: 18px; border-top: 1px solid #d9e3ef; padding-top: 12px; }
+summary { cursor: pointer; margin-bottom: 10px; }
+details p { margin: 10px 0; font-size: 13px; overflow-wrap: anywhere; }
+#error { color: #8a3845; margin-top: 12px; }
