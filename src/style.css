@@ -4,7 +4,7 @@ body { margin: 0; }
 body.avatar, .avatar canvas { width: 100vw; height: 100vh; display: block; overflow: hidden; background: transparent; pointer-events: none; }
 body.avatar.move-mode, .avatar.move-mode canvas { pointer-events: auto; cursor: grab; touch-action: none; user-select: none; -webkit-app-region: no-drag; }
 body.avatar.move-dragging, .avatar.move-dragging canvas { cursor: grabbing; }
-body.controls { background: #f8fbff; padding: 18px 20px; }
+body.controls { background: #f8fbff; padding: 12px 20px; }
 p { margin: 0 0 12px; }
 .hint { color: #415573; }
 #move-hint { margin: 12px 0; min-height: 46px; text-align: center; }
@@ -21,16 +21,18 @@ button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px 
 .size-choices label:has(:checked) { background: #e8f0fc; }
 .size-choices label:has(:disabled) { cursor: default; opacity: 0.55; }
 .size-choices input { accent-color: #3c71bc; margin: 0; }
-.arrows { text-align: center; margin-bottom: 14px; }
+.arrows { text-align: center; margin-bottom: 10px; }
 .arrows button { min-width: 44px; margin: 3px; }
 .row { display: flex; justify-content: center; gap: 7px; }
 .seat-row { margin-bottom: 14px; }
+.follow-row { margin-top: -7px; margin-bottom: 14px; }
 .presence-options { align-items: center; margin-bottom: 8px; }
 .presence-options fieldset { margin-bottom: 0; }
 .favorite-row { margin-bottom: 12px; }
 .favorite-row button { padding-inline: 9px; }
 button[aria-pressed="true"] { background: #e8f0fc; border-color: #7197c8; }
-details { margin-top: 18px; border-top: 1px solid #d9e3ef; padding-top: 12px; }
+details { margin-top: 12px; border-top: 1px solid #d9e3ef; padding-top: 12px; }
 summary { cursor: pointer; margin-bottom: 10px; }
 details p { margin: 10px 0; font-size: 13px; overflow-wrap: anywhere; }
 #error { color: #8a3845; margin-top: 12px; }
+#error:empty { display: none; }

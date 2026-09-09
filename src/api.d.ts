@@ -15,8 +15,8 @@ declare global {
       onMoveMode(callback: (state: {active: boolean; revision: number}) => void): () => void;
       submitMoveShape(revision: number, rects: Array<{x: number; y: number; width: number; height: number}>): Promise<boolean>;
       movePointer(revision: number, kind: 'start'|'move'|'end'|'cancel', point?: {x: number; y: number}): void;
-      action(action: 'show'|'hide'|'reset'|'call'|'choose-model'|'quit'|'left'|'right'|'up'|'down'|'move-mode'|'size-small'|'size-standard'|'size-large'|'stand'|'sit'|'face-left'|'face-right'|'quiet'|'seat-countdown'|'seat-here'|'save-favorite'|'restore-favorite'): Promise<void>;
-      getStatus(): Promise<{model: string; error: string; shortcuts: boolean; moving: boolean; loaded: boolean; scale: number; posture: 'standing' | 'sitting'; facing: 'left' | 'right'; quiet: boolean; hasFavorite: boolean; seatCountdown: number; seating: boolean; placementMessage: string}>;
+      action(action: 'show'|'hide'|'reset'|'call'|'choose-model'|'quit'|'left'|'right'|'up'|'down'|'move-mode'|'size-small'|'size-standard'|'size-large'|'stand'|'sit'|'face-left'|'face-right'|'quiet'|'seat-countdown'|'seat-here'|'save-favorite'|'restore-favorite'|'follow-window'|'follow-countdown'|'stop-following'): Promise<void>;
+      getStatus(): Promise<{model: string; error: string; shortcuts: boolean; moving: boolean; loaded: boolean; scale: number; posture: 'standing' | 'sitting'; facing: 'left' | 'right'; quiet: boolean; hasFavorite: boolean; seatCountdown: number; seating: boolean; placementMessage: string; following: boolean; followCountdown: number; followReady: boolean; followMessage: string}>;
     };
   }
 }

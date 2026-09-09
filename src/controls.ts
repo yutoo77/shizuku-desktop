@@ -10,6 +10,7 @@ const moveButton = document.querySelector<HTMLButtonElement>('#move-mode')!;
 const callButton = document.querySelector<HTMLButtonElement>('#call')!;
 const seatButton = document.querySelector<HTMLButtonElement>('#seat')!;
 const quietButton = document.querySelector<HTMLButtonElement>('#quiet')!;
+const followButton = document.querySelector<HTMLButtonElement>('#follow')!;
 let currentStatus: CompanionStatus | null = null;
 let busy = false;
 let requestVersion = 0;
@@ -19,6 +20,7 @@ function renderStatus(): void {
   for (const button of buttons) {
     button.disabled = busy || ((button === moveButton || button === callButton || button === seatButton) && !currentStatus?.loaded)
       || (button.dataset.action === 'restore-favorite' && !currentStatus?.hasFavorite);
+    if (button === followButton) button.disabled = busy || !currentStatus?.loaded || !currentStatus.followReady;
   }
   for (const radio of sizes) {
     radio.disabled = busy || currentStatus === null;
@@ -41,11 +43,13 @@ function renderStatus(): void {
   seatButton.textContent = currentStatus.seatCountdown || currentStatus.seating ? '場所の指定をやめる' : '3秒後のポインター位置に座る';
   quietButton.setAttribute('aria-pressed', String(currentStatus.quiet));
   quietButton.textContent = currentStatus.quiet ? '動きを戻す' : '動きを休める';
-  document.querySelector('#move-hint')!.textContent = currentStatus.seatCountdown
+  followButton.textContent = currentStatus.following || currentStatus.followCountdown ? '窓の追従をやめる' : '3秒後に選んだ窓に座る';
+  followButton.setAttribute('aria-pressed', String(currentStatus.following || !!currentStatus.followCountdown));
+  document.querySelector('#move-hint')!.textContent = currentStatus.followMessage || (currentStatus.seatCountdown
     ? `あと${currentStatus.seatCountdown}秒。座らせたい場所へポインターを動かしてね。`
     : currentStatus.seating ? '座る位置を合わせています。'
     : currentStatus.moving ? 'しずくをドラッグしてね。操作がなければ30秒で戻ります。'
-    : currentStatus.placementMessage || '矢印でも位置を調整できます。';
+    : currentStatus.placementMessage || '矢印でも位置を調整できます。');
 }
 
 async function status(): Promise<void> {

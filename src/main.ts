@@ -7,7 +7,9 @@ import { defaultBounds, clampBounds, followControlMove, normalizeScale, avatarSi
 import { MAX_MODEL_BYTES, validateModel } from './model-policy.mjs';
 import { validateShape, containsPoint, dragBounds } from './move-policy.mjs';
 import { normalizePosture } from './posture.mjs';
-import { normalizeFacing, normalizeFavorite, seatBounds } from './placement.mjs';
+import { normalizeFacing, normalizeFavorite, seatBounds, validateAnchor } from './placement.mjs';
+import { followPlacement } from './follow-policy.mjs';
+import { WindowTracker, type TrackedWindow, type TrackingEvent, type FixtureWindow } from './window-tracker';
 
 const root = path.resolve(__dirname, '..');
 const work = path.join(root, 'work');
@@ -28,10 +30,15 @@ let facing: 'left' | 'right' = 'right';
 let quiet = false;
 let favorite: ReturnType<typeof normalizeFavorite> = null;
 let seatRevision = 0;
-let pendingSeat: { revision: number; point: { x: number; y: number } } | null = null;
+let pendingSeat: { revision: number; point: { x: number; y: number }; followId?: number } | null = null;
 let seatTimer: NodeJS.Timeout | undefined;
 let seatCountdown = 0;
 let placementMessage = '';
+let tracker: WindowTracker | null = null;
+let followSequence = 0;
+let following: { id: number; window: TrackedWindow | null; anchor: { x: number; y: number } | null; state: string } | null = null;
+let followCountdown = 0;
+let followTimer: NodeJS.Timeout | undefined;
 let savedBounds: Rectangle | undefined;
 let loadError = '';
 let modelLoaded = false;
@@ -61,6 +68,8 @@ function placeAvatar(bounds: Rectangle) {
   if (quitting || !avatar || avatar.isDestroyed()) return;
   const win = avatar;
   const target = clampBounds({ ...bounds, ...avatarSize(scale, area()) }, area());
+  const current = avatarBounds(win);
+  if (current.x === target.x && current.y === target.y && current.width === target.width && current.height === target.height) return;
   const generation = ++avatarPlacementGeneration;
   pendingAvatarBounds = target;
   const verify = (retriesRemaining: number) => setImmediate(() => {
@@ -93,6 +102,10 @@ function saveSoon() {
   saveTimer = setTimeout(() => void save(), 400);
 }
 function setVisible(next: boolean) {
+  stopFollowing(false);
+  applyVisibility(next);
+}
+function applyVisibility(next: boolean) {
   if (quitting || !avatar || avatar.isDestroyed()) return;
   if (!next) { cancelSeat(); setMoveMode(false); }
   visible = next;
@@ -105,6 +118,7 @@ function setVisible(next: boolean) {
 }
 function reset() {
   if (quitting) return;
+  stopFollowing(false);
   cancelSeat();
   setMoveMode(false);
   setVisible(true);
@@ -114,6 +128,7 @@ function reset() {
 function callAvatar() {
   if (quitting || !avatar || avatar.isDestroyed()) return;
   cancelSeat();
+  if (following && (!visible || !following.anchor)) stopFollowing(true);
   if (contextRecovering) return;
   if (!modelLoaded) { openControls(); return; }
   setMoveMode(false);
@@ -123,6 +138,7 @@ function callAvatar() {
 function setScale(value: unknown) {
   if (typeof value !== 'number' || ![80, 100, 120].includes(value)) throw new Error('Unknown size');
   if (quitting || !avatar || avatar.isDestroyed() || value === scale) return;
+  stopFollowing(false);
   cancelSeat();
   setMoveMode(false);
   const bounds = resizeAvatarBounds(avatarBounds(avatar), value, area());
@@ -131,9 +147,10 @@ function setScale(value: unknown) {
   saveSoon();
   updateMenu();
 }
-function setPosture(value: unknown) {
+function setPosture(value: unknown, keepFollowing = false) {
   if (value !== 'standing' && value !== 'sitting') throw new Error('Unknown posture');
   if (quitting || !avatar || avatar.isDestroyed() || value === posture) return;
+  if (!keepFollowing) stopFollowing(false);
   cancelSeat();
   setMoveMode(false);
   posture = value;
@@ -144,6 +161,7 @@ function setPosture(value: unknown) {
 function setPresence(nextFacing: unknown, nextQuiet: unknown) {
   if ((nextFacing !== 'left' && nextFacing !== 'right') || typeof nextQuiet !== 'boolean') throw new Error('Unknown presence');
   if (quitting || !avatar || avatar.isDestroyed() || (nextFacing === facing && nextQuiet === quiet)) return;
+  if (nextFacing !== facing || (following && !following.anchor)) stopFollowing(false);
   cancelSeat();
   setMoveMode(false);
   facing = nextFacing; quiet = nextQuiet;
@@ -158,6 +176,7 @@ function cancelSeat() {
   if (avatar && !avatar.isDestroyed()) avatar.webContents.send('avatar:seat-request', null);
 }
 function seatAtPoint(point: { x: number; y: number }) {
+  stopFollowing(false);
   cancelSeat();
   if (quitting || !modelLoaded || contextRecovering || !avatar || avatar.isDestroyed()) { updateMenu(); return; }
   setMoveMode(false);
@@ -174,6 +193,7 @@ function seatAtPoint(point: { x: number; y: number }) {
   updateMenu();
 }
 function scheduleSeat() {
+  stopFollowing(false);
   if (seatCountdown || pendingSeat) { cancelSeat(); updateMenu(); return; }
   if (quitting || !modelLoaded || contextRecovering) return;
   setMoveMode(false);
@@ -189,19 +209,120 @@ function scheduleSeat() {
 }
 function saveFavorite() {
   if (quitting || !avatar || avatar.isDestroyed()) return;
-  cancelSeat(); setMoveMode(false);
+  stopFollowing(false); cancelSeat(); setMoveMode(false);
   favorite = normalizeFavorite({ bounds: avatarBounds(avatar), scale, posture, facing }, area());
   placementMessage = 'この位置を覚えました。';
   saveSoon(); updateMenu();
 }
 function restoreFavorite() {
   if (quitting || !favorite || !avatar || avatar.isDestroyed()) return;
-  cancelSeat(); setMoveMode(false);
+  stopFollowing(false); cancelSeat(); setMoveMode(false);
   const spot = normalizeFavorite(favorite, area());
   if (!spot) return;
   setScale(spot.scale); setPosture(spot.posture); setPresence(spot.facing, quiet);
   placeAvatar(spot.bounds); setVisible(true);
   placementMessage = ''; saveSoon(); updateMenu();
+}
+function stopFollowing(recover: boolean) {
+  if (!following && !followCountdown) return;
+  const attached = !!following;
+  following = null;
+  followCountdown = 0;
+  clearTimeout(followTimer);
+  tracker?.stop();
+  if (attached) clearTimeout(seatTimer);
+  if (pendingSeat?.followId) cancelSeat();
+  if (recover && attached && !quitting) {
+    applyVisibility(true);
+    placeAvatar(defaultBounds(area(), scale));
+    saveSoon();
+  }
+  updateMenu();
+}
+function startFollowing(fixture?: FixtureWindow) {
+  if (fixture && process.env.SHIZUKU_TEST !== '1') return;
+  if (following) { stopFollowing(true); return; }
+  if (quitting || !modelLoaded || contextRecovering || !tracker?.ready || !avatar) return;
+  stopFollowing(false); cancelSeat(); setMoveMode(false);
+  const id = ++followSequence;
+  following = { id, window: null, anchor: null, state: 'preparing' };
+  placementMessage = '';
+  seatTimer = setTimeout(() => {
+    if (following?.id === id && !following.anchor) { stopFollowing(true); placementMessage = '座る位置を確認できませんでした。'; updateMenu(); }
+  }, 4000);
+  try { tracker.select(id, fixture); }
+  catch { stopFollowing(true); placementMessage = '追従を始められませんでした。再起動して試してください。'; }
+  updateMenu();
+}
+function scheduleFollowing(fixture?: FixtureWindow) {
+  if (fixture && process.env.SHIZUKU_TEST !== '1') return;
+  if (following || followCountdown) { stopFollowing(true); return; }
+  if (quitting || !modelLoaded || !tracker?.ready) return;
+  cancelSeat(); setMoveMode(false);
+  placementMessage = ''; followCountdown = 3;
+  const tick = () => {
+    if (quitting || followCountdown === 0) return;
+    followCountdown--;
+    if (followCountdown === 0) { startFollowing(fixture); return; }
+    updateMenu(); followTimer = setTimeout(tick, 1000);
+  };
+  updateMenu(); followTimer = setTimeout(tick, 1000);
+}
+function updateFollowing() {
+  const target = following;
+  if (!target?.window || !target.anchor || !avatar || quitting) return;
+  const previous = target.state;
+  let bounds: Rectangle | null = null;
+  if (target.window.state !== 'visible') target.state = target.window.state;
+  else {
+    const physical = { x: target.window.x, y: target.window.y, width: target.window.width, height: target.window.height };
+    const rect = screen.screenToDipRect(null, physical);
+    if (screen.getDisplayMatching(rect).id !== screen.getPrimaryDisplay().id) target.state = 'other-screen';
+    else {
+      bounds = followPlacement(rect, target.anchor, scale, area());
+      target.state = bounds ? 'following' : 'no-room';
+    }
+  }
+  if (bounds) {
+    placeAvatar(bounds);
+    if (!visible) applyVisibility(true);
+  } else if (visible) applyVisibility(false);
+  if (previous !== target.state) updateMenu();
+}
+function onTrackedWindow(event: TrackingEvent) {
+  if (quitting || !following || event.id !== following.id) return;
+  if (event.type === 'end') {
+    const reason = event.reason;
+    stopFollowing(true);
+    placementMessage = reason === 'closed' ? '窓を閉じたので、画面端に戻りました。'
+      : reason === 'ineligible' ? '座らせたい別の窓を選んで、もう一度試してください。'
+      : '窓を確認できないため、画面端に戻りました。';
+    updateMenu(); return;
+  }
+  following.window = event;
+  if (!following.anchor && !pendingSeat?.followId && event.state === 'visible') {
+    // Capture the selected native window BEFORE showing or changing our own
+    // windows; otherwise focus transitions could change the selection.
+    setPosture('sitting', true);
+    applyVisibility(true);
+    const revision = ++seatRevision;
+    pendingSeat = { revision, point: { x: 0, y: 0 }, followId: following.id };
+    avatar?.webContents.send('avatar:seat-request', revision);
+    clearTimeout(seatTimer);
+    seatTimer = setTimeout(() => {
+      if (following?.id === event.id && !following.anchor) { stopFollowing(true); placementMessage = '座る位置を確認できませんでした。'; updateMenu(); }
+    }, 4000);
+  }
+  updateFollowing();
+}
+function followMessage(): string {
+  if (followCountdown) return `あと${followCountdown}秒。座らせたい窓をクリックしてね。`;
+  if (!following) return '';
+  if (following.state === 'following') return '窓の動きについていきます。';
+  if (following.state === 'preparing') return '座る位置を合わせています。';
+  if (following.state === 'no-room') return '窓の上に余白ができるまで、隠れて待ちます。';
+  if (following.state === 'other-screen') return '窓が主画面へ戻るまで、隠れて待ちます。';
+  return '窓を戻すまで、隠れて待ちます。';
 }
 function renewMoveTimeout() {
   clearTimeout(moveTimeout);
@@ -210,7 +331,7 @@ function renewMoveTimeout() {
 }
 function setMoveMode(next: boolean) {
   if (quitting || !avatar || avatar.isDestroyed()) return;
-  if (next) cancelSeat();
+  if (next) { stopFollowing(false); cancelSeat(); }
   if (next && contextRecovering) return;
   if (next && !modelLoaded) { openControls(); return; }
   if (next && !visible) setVisible(true);
@@ -278,6 +399,7 @@ function updateMenu() {
     { label: moveMode ? '移動をやめる' : 'しずくをつかんで移動', enabled: modelLoaded, click: () => setMoveMode(!moveMode) },
     { label: '位置を動かす…', click: openControls },
     { label: seatCountdown || pendingSeat ? '座る場所の指定をやめる' : '3秒後のポインター位置に座る', enabled: modelLoaded, click: scheduleSeat },
+    { label: following || followCountdown ? '窓の追従をやめる' : '3秒後に選んだ窓に座る', enabled: modelLoaded && !!tracker?.ready, click: () => scheduleFollowing() },
     { label: 'お気に入りの位置', submenu: [
       { label: '今の位置を覚える', click: saveFavorite },
       { label: '覚えた位置へ戻る', enabled: !!favorite, click: restoreFavorite },
@@ -302,7 +424,7 @@ function updateMenu() {
     { label: '終了', click: () => app.quit() },
   ]);
   tray?.setContextMenu(trayMenu);
-  tray?.setToolTip(`月白しずく — ${loadError || (moveMode ? 'つかんで移動できます' : visible ? '表示中' : '非表示')}`);
+  tray?.setToolTip(`月白しずく — ${loadError || followMessage() || (moveMode ? 'つかんで移動できます' : visible ? '表示中' : '非表示')}`);
 }
 function openControls() {
   if (quitting) return;
@@ -317,6 +439,7 @@ function openControls() {
   let previous = win.getBounds();
   win.on('move', () => {
     if (quitting || controls !== win || win.isDestroyed() || !avatar) return;
+    stopFollowing(false);
     cancelSeat();
     setMoveMode(false);
     const next = win.getBounds();
@@ -331,6 +454,7 @@ function openControls() {
 }
 async function chooseModel() {
   if (choosing || quitting) return;
+  stopFollowing(true);
   cancelSeat();
   setMoveMode(false);
   choosing = true;
@@ -386,10 +510,14 @@ async function action(value: string) {
   else if (value === 'quiet') setPresence(facing, !quiet);
   else if (value === 'seat-countdown') scheduleSeat();
   else if (value === 'seat-here') seatAtPoint(screen.getCursorScreenPoint());
+  else if (value === 'follow-window') startFollowing();
+  else if (value === 'follow-countdown') scheduleFollowing();
+  else if (value === 'stop-following') stopFollowing(true);
   else if (value === 'save-favorite') saveFavorite();
   else if (value === 'restore-favorite') restoreFavorite();
   else if (value === 'quit') app.quit();
   else if (['left', 'right', 'up', 'down'].includes(value) && avatar) {
+    stopFollowing(false);
     cancelSeat();
     setMoveMode(false);
     const bounds = avatarBounds(avatar);
@@ -431,17 +559,21 @@ async function start() {
   avatar.setIgnoreMouseEvents(true);
   secureWindow(avatar);
   avatar.on('closed', () => { avatarPlacementGeneration++; pendingAvatarBounds = undefined; avatar = null; if (!quitting) app.quit(); });
-  avatar.webContents.on('render-process-gone', () => { cancelSeat(); setMoveMode(false); modelLoaded = false; contextRecovering = false; loadError = '描画が停止しました。終了して再起動してください。'; updateMenu(); });
-  avatar.webContents.on('unresponsive', () => { cancelSeat(); setMoveMode(false); updateMenu(); });
+  avatar.webContents.on('render-process-gone', () => { stopFollowing(true); cancelSeat(); setMoveMode(false); modelLoaded = false; contextRecovering = false; loadError = '描画が停止しました。終了して再起動してください。'; updateMenu(); });
+  avatar.webContents.on('unresponsive', () => { stopFollowing(true); cancelSeat(); setMoveMode(false); updateMenu(); });
   ipcMain.on('avatar:seat-anchor', (event, revision, anchor) => {
     if (!trusted(event, avatar, avatarUrl) || !pendingSeat || revision !== pendingSeat.revision || !modelLoaded || !visible || !avatar) return;
-    const point = pendingSeat.point;
+    const { point, followId } = pendingSeat;
     cancelSeat();
     try {
+      if (followId) {
+        if (following?.id === followId) { following.anchor = validateAnchor(anchor); updateFollowing(); }
+        return;
+      }
       placeAvatar(seatBounds(point, anchor, scale, area()));
       placementMessage = '座る位置を合わせました。矢印で微調整できます。';
       saveSoon();
-    } catch { placementMessage = '座る位置を確認できませんでした。'; }
+    } catch { stopFollowing(true); placementMessage = '座る位置を確認できませんでした。'; }
     updateMenu();
   });
   ipcMain.handle('avatar:move-shape', (event, revision, value) => {
@@ -468,7 +600,7 @@ async function start() {
     if (state.ok && state.recovering) return;
     contextRecovering = state.recovering === true;
     modelLoaded = state.ok;
-    if (!state.ok) { cancelSeat(); setMoveMode(false); }
+    if (!state.ok) { stopFollowing(true); cancelSeat(); setMoveMode(false); }
     loadError = state.ok ? '' : String(state.error ?? 'モデル未選択').slice(0, 180);
     avatar?.webContents.send('avatar:visibility', visible);
     avatar?.webContents.send('avatar:posture', posture);
@@ -481,7 +613,7 @@ async function start() {
   });
   ipcMain.handle('controls:status', event => {
     if (!trusted(event, controls, controlsUrl)) throw new Error('Denied sender');
-    return { model: modelPath ? path.basename(modelPath) : '', error: loadError, shortcuts, moving: moveMode, loaded: modelLoaded, scale, posture, facing, quiet, hasFavorite: !!favorite, seatCountdown, seating: !!pendingSeat, placementMessage };
+    return { model: modelPath ? path.basename(modelPath) : '', error: loadError, shortcuts, moving: moveMode, loaded: modelLoaded, scale, posture, facing, quiet, hasFavorite: !!favorite, seatCountdown, seating: !!pendingSeat, placementMessage, following: !!following, followCountdown, followReady: !!tracker?.ready, followMessage: followMessage() };
   });
   tray = new Tray(icon());
   tray.on('double-click', () => setVisible(!visible));
@@ -491,6 +623,7 @@ async function start() {
     ['CommandOrControl+Alt+Shift+C', callAvatar],
     ['CommandOrControl+Alt+Shift+P', () => setPosture(posture === 'standing' ? 'sitting' : 'standing')],
     ['CommandOrControl+Alt+Shift+E', () => seatAtPoint(screen.getCursorScreenPoint())],
+    ['CommandOrControl+Alt+Shift+W', () => startFollowing()],
     ['CommandOrControl+Alt+Shift+B', restoreFavorite],
     ['CommandOrControl+Alt+Shift+F', () => setPresence(facing === 'left' ? 'right' : 'left', quiet)],
     ['CommandOrControl+Alt+Shift+Z', () => setPresence(facing, !quiet)],
@@ -499,14 +632,20 @@ async function start() {
   ];
   shortcuts = bindings.map(([key, handler]) => globalShortcut.register(key, handler)).every(Boolean);
   updateMenu();
-  screen.on('display-metrics-changed', () => { cancelSeat(); setMoveMode(false); if (avatar && !avatar.isDestroyed()) placeAvatar(avatarBounds(avatar)); updateMenu(); });
+  screen.on('display-metrics-changed', () => { stopFollowing(true); cancelSeat(); setMoveMode(false); if (avatar && !avatar.isDestroyed()) placeAvatar(avatarBounds(avatar)); updateMenu(); });
+  tracker = new WindowTracker(onTrackedWindow, available => {
+    if (quitting) return;
+    if (!available) { stopFollowing(true); placementMessage = '窓の追従を使うには、アプリを再起動してください。'; }
+    updateMenu();
+  });
+  if (process.platform === 'win32') tracker.start(path.join(__dirname, 'window-tracker.exe'), process.env.SHIZUKU_TEST === '1');
   await avatar.loadURL(avatarUrl);
   if (quitting || !avatar || avatar.isDestroyed()) return;
   if (visible) setVisible(true);
   if (!modelPath) openControls();
   if (process.env.SHIZUKU_METRICS === '1') {
     metricsTimer = setInterval(() => {
-      metricSamples.push({ time: new Date().toISOString(), visible, loaded: modelLoaded, scale, processes: app.getAppMetrics() });
+      metricSamples.push({ time: new Date().toISOString(), visible, loaded: modelLoaded, scale, processes: app.getAppMetrics(), windowTracker: { pid: tracker?.pid, ready: tracker?.ready, stats: tracker?.stats } });
       if (metricSamples.length > 1800) metricSamples.shift();
     }, 2000);
   }
@@ -516,7 +655,9 @@ async function start() {
     tray: () => tray, trayMenu: () => trayMenu,
     setMoveMode, moveState: () => ({ active: moveMode, revision: moveRevision, shape: moveShape, dragging: !!moveStart }),
     setScale, setPosture, setPresence, seatAtPoint, cancelSeat,
-    status: () => ({ visible, modelLoaded, contextRecovering, loadError, shortcuts, scale, posture, facing, quiet, favorite, seatCountdown, pendingSeat }), metrics: () => app.getAppMetrics(),
+    startFollowing, scheduleFollowing, stopFollowing, onTrackedWindow,
+    tracking: () => ({ following, countdown: followCountdown, ready: !!tracker?.ready, pid: tracker?.pid, stats: tracker?.stats }),
+    status: () => ({ visible, modelLoaded, contextRecovering, loadError, shortcuts, scale, posture, facing, quiet, favorite, seatCountdown, pendingSeat, placementMessage }), metrics: () => app.getAppMetrics(),
   };
 }
 
@@ -530,7 +671,7 @@ else {
     if (quitFlushComplete) return;
     event.preventDefault();
     if (quitting) return;
-    cancelSeat(); setMoveMode(false);
+    stopFollowing(false); cancelSeat(); setMoveMode(false);
     quitting = true;
     avatarPlacementGeneration++;
     clearInterval(metricsTimer);
@@ -539,6 +680,7 @@ else {
     globalShortcut.unregisterAll();
     tray?.destroy(); tray = null; trayMenu = null;
     void (async () => {
+      await tracker?.close();
       await save();
       if (metricSamples.length) await writeFile(path.join(dataRoot, 'metrics.json'), JSON.stringify(metricSamples, null, 2));
     })().catch(() => {}).finally(() => {
