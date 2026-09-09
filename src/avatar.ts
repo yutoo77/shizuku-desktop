@@ -5,12 +5,14 @@ import {
 } from 'three';
 import { GLTFLoader, type GLTFParser } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMHumanBoneName, VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
+import { rgbaToShape } from './move-policy.mjs';
 
 export interface AvatarDiagnostics {
   loaded: boolean;
   visible: boolean;
   animating: boolean;
   reducedMotion: boolean;
+  moving: boolean;
   renderedFrames: number;
   fps: number;
   modelName: string | null;
@@ -37,6 +39,7 @@ export class Avatar {
   private vrm: VRM | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private visible = true;
+  private moving = false;
   private disposed = false;
   private loadVersion = 0;
   private elapsed = 0;
@@ -47,7 +50,7 @@ export class Avatar {
   private blinkNames: string[] = [];
 
   public readonly diagnostics: AvatarDiagnostics = {
-    loaded: false, visible: true, animating: false, reducedMotion: false,
+    loaded: false, visible: true, animating: false, reducedMotion: false, moving: false,
     renderedFrames: 0, fps: 0, modelName: null, triangles: 0, drawCalls: 0,
     geometries: 0, textures: 0, loadTimeMs: null, pixelRatio: 1, error: null,
   };
@@ -128,6 +131,8 @@ export class Avatar {
   public clear(): void {
     this.loadVersion += 1;
     this.pause();
+    this.moving = false;
+    this.diagnostics.moving = false;
     if (this.vrm) {
       this.vrm.scene.removeFromParent();
       VRMUtils.deepDispose(this.vrm.scene);
@@ -158,6 +163,40 @@ export class Avatar {
     else this.pause();
   }
 
+  /** Snapshot only our canvas, once, while its displayed pose stays frozen. */
+  public enterMoveMode(): Array<{ x: number; y: number; width: number; height: number }> {
+    if (this.disposed || !this.visible || !this.vrm) {
+      throw new Error('しずくが表示されてから、もう一度試してください。');
+    }
+    this.pause();
+    this.moving = true;
+    this.diagnostics.moving = true;
+    // Do not call draw(0): even a zero delta would update bones, expressions and
+    // spring bones. The shaped window must match exactly this frozen frame.
+    this.renderCurrentFrame();
+    const gl = this.renderer.getContext();
+    if (gl.isContextLost()) throw new Error('描画を確認できませんでした。');
+    const width = gl.drawingBufferWidth;
+    const height = gl.drawingBufferHeight;
+    if (width !== window.innerWidth || height !== window.innerHeight) {
+      throw new Error('表示倍率の変更が終わってから、もう一度試してください。');
+    }
+    const pixels = new Uint8Array(width * height * 4);
+    // Immediate readback is intentional: preserveDrawingBuffer remains disabled.
+    // This is our WebGL drawing buffer, never a desktop/screen capture.
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    const shape = rgbaToShape(pixels, width, height);
+    if (shape.length === 0) throw new Error('しずくの輪郭を確認できませんでした。');
+    return shape;
+  }
+
+  public exitMoveMode(): void {
+    if (!this.moving) return;
+    this.moving = false;
+    this.diagnostics.moving = false;
+    this.resume();
+  }
+
   public dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -185,11 +224,14 @@ export class Avatar {
     this.camera.right = this.camera.top * width / height;
     this.camera.left = -this.camera.right;
     this.camera.updateProjectionMatrix();
-    if (this.visible && this.vrm) this.draw(0);
+    if (this.visible && this.vrm) {
+      if (this.moving) this.renderCurrentFrame();
+      else this.draw(0);
+    }
   }
 
   private resume(): void {
-    if (this.disposed || !this.visible || !this.vrm || this.timer !== null) return;
+    if (this.disposed || !this.visible || this.moving || !this.vrm || this.timer !== null) return;
     this.lastFrame = performance.now();
     this.sampleStart = this.lastFrame;
     this.sampleFrames = 0;
@@ -209,7 +251,7 @@ export class Avatar {
 
   private readonly tick = (): void => {
     this.timer = null;
-    if (this.disposed || !this.visible || !this.vrm || this.motion.matches) return;
+    if (this.disposed || !this.visible || this.moving || !this.vrm || this.motion.matches) return;
     const started = performance.now();
     const delta = Math.min((started - this.lastFrame) / 1000, 0.1);
     this.lastFrame = started;
@@ -237,6 +279,10 @@ export class Avatar {
       ? Math.sin(blinkPhase / 0.18 * Math.PI) : 0;
     for (const name of this.blinkNames) vrm.expressionManager?.setValue(name, blink);
     vrm.update(delta);
+    this.renderCurrentFrame();
+  }
+
+  private renderCurrentFrame(): void {
     this.renderer.render(this.scene, this.camera);
     this.diagnostics.renderedFrames += 1;
     this.diagnostics.triangles = this.renderer.info.render.triangles;

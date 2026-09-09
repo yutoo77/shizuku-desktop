@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { defaultBounds, clampBounds, followControlMove } from './geometry.mjs';
 import { MAX_MODEL_BYTES, validateModel } from './model-policy.mjs';
+import { validateShape, containsPoint, dragBounds } from './move-policy.mjs';
 
 const root = path.resolve(__dirname, '..');
 const work = path.join(root, 'work');
@@ -29,6 +30,11 @@ let choosing = false;
 let writeQueue = Promise.resolve();
 let pendingAvatarBounds: Rectangle | undefined;
 let avatarPlacementGeneration = 0;
+let moveMode = false;
+let moveRevision = 0;
+let moveShape: Rectangle[] = [];
+let moveTimeout: NodeJS.Timeout | undefined;
+let moveStart: { bounds: Rectangle; cursor: { x: number; y: number } } | null = null;
 const metricSamples: unknown[] = [];
 const area = () => screen.getPrimaryDisplay().workArea;
 
@@ -72,6 +78,7 @@ function saveSoon() {
 }
 function setVisible(next: boolean) {
   if (quitting || !avatar || avatar.isDestroyed()) return;
+  if (!next) setMoveMode(false);
   visible = next;
   if (next) {
     placeAvatar(avatarBounds(avatar));
@@ -82,9 +89,55 @@ function setVisible(next: boolean) {
 }
 function reset() {
   if (quitting) return;
+  setMoveMode(false);
   setVisible(true);
   placeAvatar(defaultBounds(area()));
   saveSoon();
+}
+function renewMoveTimeout() {
+  clearTimeout(moveTimeout);
+  // A lost release or abandoned move mode must never leave an input-catching window.
+  moveTimeout = setTimeout(() => setMoveMode(false), 30_000);
+}
+function setMoveMode(next: boolean) {
+  if (quitting || !avatar || avatar.isDestroyed()) return;
+  if (next && !modelLoaded) { openControls(); return; }
+  if (next && !visible) setVisible(true);
+  if (moveMode === next) return;
+  moveMode = next;
+  moveRevision++;
+  moveShape = [];
+  moveStart = null;
+  clearTimeout(moveTimeout);
+  // Ignore first, then clear the shape: [] restores a rectangular native window.
+  avatar.setIgnoreMouseEvents(true);
+  avatar.setShape([]);
+  avatar.webContents.send('avatar:move-mode', { active: next, revision: moveRevision });
+  if (next) renewMoveTimeout();
+  else saveSoon();
+  updateMenu();
+}
+function movePointer(revision: unknown, kind: unknown, point?: unknown) {
+  if (quitting || !moveMode || revision !== moveRevision || !avatar || avatar.isDestroyed()) return;
+  if (kind === 'cancel') { setMoveMode(false); return; }
+  if (kind !== 'start' && kind !== 'move' && kind !== 'end') return;
+  if (!point || typeof point !== 'object' || !('x' in point) || !('y' in point)
+    || typeof point.x !== 'number' || typeof point.y !== 'number'
+    || !Number.isFinite(point.x) || !Number.isFinite(point.y)
+    || Math.abs(point.x) > 1_000_000 || Math.abs(point.y) > 1_000_000) { setMoveMode(false); return; }
+  // Use event-time DIP coordinates; reading the global cursor here races queued IPC.
+  const cursor = { x: point.x, y: point.y };
+  if (kind === 'start') {
+    if (moveStart || !moveShape.length) return;
+    const bounds = avatarBounds(avatar);
+    if (!containsPoint(moveShape, { x: cursor.x - bounds.x, y: cursor.y - bounds.y })) return;
+    moveStart = { bounds, cursor };
+  } else if (moveStart) {
+    try { placeAvatar(dragBounds(moveStart.bounds, moveStart.cursor, cursor, area())); }
+    catch { setMoveMode(false); return; }
+  }
+  if (kind === 'end') { setMoveMode(false); return; }
+  renewMoveTimeout();
 }
 function trusted(event: IpcMainInvokeEvent | IpcMainEvent, owner: BrowserWindow | null, expected: string) {
   return !!owner && !owner.isDestroyed() && event.sender === owner.webContents && event.senderFrame === owner.webContents.mainFrame && event.senderFrame.url === expected;
@@ -109,6 +162,7 @@ function updateMenu() {
     { label: '月白 しずく', enabled: false },
     ...(loadError ? [{ label: loadError.slice(0, 65), enabled: false }] : []),
     { label: visible ? '隠す' : '表示する', click: () => setVisible(!visible) },
+    { label: moveMode ? '移動をやめる' : 'しずくをつかんで移動', enabled: modelLoaded, click: () => setMoveMode(!moveMode) },
     { label: '位置を動かす…', click: openControls },
     { label: '画面端に戻す', click: reset },
     { type: 'separator' as const },
@@ -116,7 +170,7 @@ function updateMenu() {
     { label: '終了', click: () => app.quit() },
   ]);
   tray?.setContextMenu(trayMenu);
-  tray?.setToolTip(`月白しずく — ${loadError || (visible ? '表示中' : '非表示')}`);
+  tray?.setToolTip(`月白しずく — ${loadError || (moveMode ? 'つかんで移動できます' : visible ? '表示中' : '非表示')}`);
 }
 function openControls() {
   if (quitting) return;
@@ -131,6 +185,7 @@ function openControls() {
   let previous = win.getBounds();
   win.on('move', () => {
     if (quitting || controls !== win || win.isDestroyed() || !avatar) return;
+    setMoveMode(false);
     const next = win.getBounds();
     placeAvatar(followControlMove(avatarBounds(avatar), previous, next, area()));
     previous = next;
@@ -143,6 +198,7 @@ function openControls() {
 }
 async function chooseModel() {
   if (choosing || quitting) return;
+  setMoveMode(false);
   choosing = true;
   try {
     const options = { title: '利用条件を確認したVRMを選ぶ', filters: [{ name: 'VRM', extensions: ['vrm'] }], properties: ['openFile' as const] };
@@ -184,8 +240,10 @@ async function action(value: string) {
   else if (value === 'hide') setVisible(false);
   else if (value === 'reset') reset();
   else if (value === 'choose-model') await chooseModel();
+  else if (value === 'move-mode') setMoveMode(!moveMode);
   else if (value === 'quit') app.quit();
   else if (['left', 'right', 'up', 'down'].includes(value) && avatar) {
+    setMoveMode(false);
     const bounds = avatarBounds(avatar);
     bounds.x += value === 'left' ? -16 : value === 'right' ? 16 : 0;
     bounds.y += value === 'up' ? -16 : value === 'down' ? 16 : 0;
@@ -214,10 +272,28 @@ async function start() {
     focusable: false, skipTaskbar: true, alwaysOnTop: true, show: false,
     webPreferences: { preload: path.join(__dirname,'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, spellcheck: false, backgroundThrottling: true },
   });
+  // On this Windows setup, the default below-taskbar "floating" level loses
+  // topmost status. Keep the avatar inside workArea and use the next native level.
+  avatar.setAlwaysOnTop(true, 'pop-up-menu');
   avatar.setIgnoreMouseEvents(true);
   secureWindow(avatar);
   avatar.on('closed', () => { avatarPlacementGeneration++; pendingAvatarBounds = undefined; avatar = null; if (!quitting) app.quit(); });
-  avatar.webContents.on('render-process-gone', () => { loadError = '描画が停止しました。終了して再起動してください。'; updateMenu(); });
+  avatar.webContents.on('render-process-gone', () => { setMoveMode(false); modelLoaded = false; loadError = '描画が停止しました。終了して再起動してください。'; updateMenu(); });
+  avatar.webContents.on('unresponsive', () => setMoveMode(false));
+  ipcMain.handle('avatar:move-shape', (event, revision, value) => {
+    if (!trusted(event, avatar, avatarUrl)) throw new Error('Denied sender');
+    if (!moveMode || revision !== moveRevision || !modelLoaded || !visible || !avatar || moveStart) return false;
+    try {
+      const { width, height } = avatar.getContentBounds();
+      moveShape = validateShape(value, width, height);
+      avatar.setShape(moveShape);
+      avatar.setIgnoreMouseEvents(false);
+      return true;
+    } catch { setMoveMode(false); return false; }
+  });
+  ipcMain.on('avatar:move-pointer', (event, revision, kind, point) => {
+    if (trusted(event, avatar, avatarUrl)) movePointer(revision, kind, point);
+  });
   ipcMain.handle('model:read', async event => {
     if (!trusted(event, avatar, avatarUrl)) throw new Error('Denied sender');
     return modelPath ? readModel(modelPath) : null;
@@ -225,6 +301,7 @@ async function start() {
   ipcMain.on('avatar:ready', (event, state) => {
     if (!trusted(event, avatar, avatarUrl) || !state || typeof state.ok !== 'boolean') return;
     modelLoaded = state.ok;
+    if (!state.ok) setMoveMode(false);
     loadError = state.ok ? '' : String(state.error ?? 'モデル未選択').slice(0, 180);
     avatar?.webContents.send('avatar:visibility', visible);
     updateMenu();
@@ -235,18 +312,19 @@ async function start() {
   });
   ipcMain.handle('controls:status', event => {
     if (!trusted(event, controls, controlsUrl)) throw new Error('Denied sender');
-    return { model: modelPath ? path.basename(modelPath) : '', error: loadError, shortcuts };
+    return { model: modelPath ? path.basename(modelPath) : '', error: loadError, shortcuts, moving: moveMode, loaded: modelLoaded };
   });
   tray = new Tray(icon());
   tray.on('double-click', () => setVisible(!visible));
   const bindings: Array<[string, () => void]> = [
     ['CommandOrControl+Alt+Shift+S', () => setVisible(!visible)],
     ['CommandOrControl+Alt+Shift+R', reset],
+    ['CommandOrControl+Alt+Shift+M', () => setMoveMode(!moveMode)],
     ['CommandOrControl+Alt+Shift+Q', () => app.quit()],
   ];
   shortcuts = bindings.map(([key, handler]) => globalShortcut.register(key, handler)).every(Boolean);
   updateMenu();
-  screen.on('display-metrics-changed', () => { if (avatar && !avatar.isDestroyed()) placeAvatar(avatarBounds(avatar)); });
+  screen.on('display-metrics-changed', () => { setMoveMode(false); if (avatar && !avatar.isDestroyed()) placeAvatar(avatarBounds(avatar)); });
   await avatar.loadURL(avatarUrl);
   if (quitting || !avatar || avatar.isDestroyed()) return;
   if (visible) setVisible(true);
@@ -261,6 +339,7 @@ async function start() {
   if (process.env.SHIZUKU_TEST === '1') (globalThis as any).__shizuku = {
     avatar: () => avatar, controls: () => controls, setVisible, reset, openControls, action,
     tray: () => tray, trayMenu: () => trayMenu,
+    setMoveMode, moveState: () => ({ active: moveMode, revision: moveRevision, shape: moveShape, dragging: !!moveStart }),
     status: () => ({ visible, modelLoaded, loadError, shortcuts }), metrics: () => app.getAppMetrics(),
   };
 }
@@ -275,10 +354,12 @@ else {
     if (quitFlushComplete) return;
     event.preventDefault();
     if (quitting) return;
+    setMoveMode(false);
     quitting = true;
     avatarPlacementGeneration++;
     clearInterval(metricsTimer);
     clearTimeout(saveTimer);
+    clearTimeout(moveTimeout);
     globalShortcut.unregisterAll();
     tray?.destroy(); tray = null; trayMenu = null;
     void (async () => {

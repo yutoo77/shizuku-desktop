@@ -2,9 +2,12 @@
 * { box-sizing: border-box; }
 body { margin: 0; }
 body.avatar, .avatar canvas { width: 100vw; height: 100vh; display: block; overflow: hidden; background: transparent; pointer-events: none; }
+body.avatar.move-mode, .avatar.move-mode canvas { pointer-events: auto; cursor: grab; touch-action: none; user-select: none; -webkit-app-region: no-drag; }
+body.avatar.move-dragging, .avatar.move-dragging canvas { cursor: grabbing; }
 body.controls { background: #f8fbff; padding: 18px 20px; }
 p { margin: 0 0 12px; }
 .hint { color: #415573; }
+#move-hint { margin: 12px 0; min-height: 46px; text-align: center; }
 button { font: inherit; color: #243f6a; border: 1px solid #b9cbe2; background: #fff; border-radius: 7px; padding: 6px 12px; cursor: pointer; }
 button:hover { background: #edf4ff; }
 button:focus-visible, summary:focus-visible { outline: 2px solid #3c71bc; outline-offset: 3px; }

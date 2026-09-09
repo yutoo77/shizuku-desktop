@@ -12,9 +12,14 @@ let avatar: Avatar | null = null;
 let disposed = false;
 let revision = 0;
 let windowVisible = true;
+let moveActive = false;
+let moveRevision = 0;
+let moveEnding = false;
+let pointerId: number | null = null;
 const unsubscribers: Array<() => void> = [];
 
 function reportError(error: unknown): void {
+  cancelMoveMode();
   const message = error instanceof Error ? error.message : 'モデルを表示できませんでした。';
   if (avatar) avatar.diagnostics.error = message;
   window.companion.ready({ ok: false, error: message });
@@ -22,6 +27,7 @@ function reportError(error: unknown): void {
 
 async function reload(): Promise<void> {
   const current = ++revision;
+  cancelMoveMode();
   avatar?.clear();
   try {
     const buffer = await window.companion.getModel();
@@ -39,7 +45,97 @@ async function reload(): Promise<void> {
 }
 
 function updateVisibility(): void {
+  if (!windowVisible || document.hidden) cancelMoveMode();
   avatar?.setVisible(windowVisible && !document.hidden);
+}
+
+function releasePointer(): void {
+  const captured = pointerId;
+  pointerId = null;
+  document.body.classList.remove('move-dragging');
+  if (captured !== null && canvas instanceof HTMLCanvasElement && canvas.hasPointerCapture(captured)) {
+    canvas.releasePointerCapture(captured);
+  }
+}
+
+function clearMoveMode(): void {
+  moveActive = false;
+  moveEnding = false;
+  releasePointer();
+  document.body.classList.remove('move-mode');
+  avatar?.exitMoveMode();
+}
+
+function finishMove(kind: 'end' | 'cancel', event?: PointerEvent): void {
+  if (!moveActive || moveEnding) return;
+  moveEnding = true;
+  releasePointer();
+  const point = event ? { x: event.screenX, y: event.screenY } : undefined;
+  if (kind === 'end') window.companion.movePointer(moveRevision, 'move', point);
+  window.companion.movePointer(moveRevision, kind, point);
+  // Keep the pose frozen until main has restored the ordinary transparent window.
+}
+
+function cancelMoveMode(): void {
+  finishMove('cancel');
+}
+
+async function updateMoveMode(state: {active: boolean; revision: number}): Promise<void> {
+  if (disposed || state.revision < moveRevision) return;
+  if (state.revision === moveRevision && state.active === moveActive) return;
+  clearMoveMode();
+  moveRevision = state.revision;
+  if (!state.active) return;
+  moveActive = true;
+  const current = moveRevision;
+  try {
+    if (!avatar) throw new Error('しずくを準備できませんでした。');
+    const shape = avatar.enterMoveMode();
+    document.body.classList.add('move-mode');
+    const accepted = await window.companion.submitMoveShape(current, shape);
+    if (disposed || current !== moveRevision || !moveActive) return;
+    if (!accepted) finishMove('cancel');
+  } catch (error) {
+    if (disposed || current !== moveRevision || !moveActive) return;
+    if (avatar) avatar.diagnostics.error = error instanceof Error ? error.message : '移動を始められませんでした。';
+    finishMove('cancel');
+  }
+}
+
+function onPointerDown(event: PointerEvent): void {
+  if (!moveActive || moveEnding || pointerId !== null || event.button !== 0 || !event.isPrimary) return;
+  if (!(canvas instanceof HTMLCanvasElement)) return;
+  event.preventDefault();
+  pointerId = event.pointerId;
+  try {
+    canvas.setPointerCapture(pointerId);
+    document.body.classList.add('move-dragging');
+    window.companion.movePointer(moveRevision, 'start', { x: event.screenX, y: event.screenY });
+  } catch {
+    finishMove('cancel');
+  }
+}
+
+function onPointerMove(event: PointerEvent): void {
+  if (!moveActive || moveEnding || event.pointerId !== pointerId) return;
+  if ((event.buttons & 1) === 0) {
+    finishMove('end', event);
+    return;
+  }
+  event.preventDefault();
+  window.companion.movePointer(moveRevision, 'move', { x: event.screenX, y: event.screenY });
+}
+
+function onPointerUp(event: PointerEvent): void {
+  if (event.pointerId === pointerId) finishMove('end', event);
+}
+
+function onPointerCancelled(event: PointerEvent): void {
+  if (event.pointerId === pointerId) finishMove('cancel');
+}
+
+function onWindowInterruption(): void {
+  finishMove('cancel');
 }
 
 try {
@@ -51,6 +147,14 @@ try {
     updateVisibility();
   }));
   unsubscribers.push(window.companion.onModelChanged(() => { void reload(); }));
+  unsubscribers.push(window.companion.onMoveMode(state => { void updateMoveMode(state); }));
+  canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointermove', onPointerMove);
+  canvas.addEventListener('pointerup', onPointerUp);
+  canvas.addEventListener('pointercancel', onPointerCancelled);
+  canvas.addEventListener('lostpointercapture', onPointerCancelled);
+  window.addEventListener('blur', onWindowInterruption);
+  window.addEventListener('resize', onWindowInterruption);
   document.addEventListener('visibilitychange', updateVisibility);
   updateVisibility();
   void reload();
@@ -59,9 +163,19 @@ try {
 }
 
 window.addEventListener('beforeunload', () => {
+  cancelMoveMode();
   disposed = true;
+  avatar?.setVisible(false);
+  clearMoveMode();
   revision += 1;
   for (const unsubscribe of unsubscribers) unsubscribe();
   document.removeEventListener('visibilitychange', updateVisibility);
+  canvas?.removeEventListener('pointerdown', onPointerDown as EventListener);
+  canvas?.removeEventListener('pointermove', onPointerMove as EventListener);
+  canvas?.removeEventListener('pointerup', onPointerUp as EventListener);
+  canvas?.removeEventListener('pointercancel', onPointerCancelled as EventListener);
+  canvas?.removeEventListener('lostpointercapture', onPointerCancelled as EventListener);
+  window.removeEventListener('blur', onWindowInterruption);
+  window.removeEventListener('resize', onWindowInterruption);
   avatar?.dispose();
 }, { once: true });

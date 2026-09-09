@@ -4,6 +4,11 @@ async function status() {
   document.querySelector('#model')!.textContent = value.model || 'モデル未選択';
   document.querySelector('#error')!.textContent = value.error;
   document.querySelector('#shortcuts')!.textContent = value.shortcuts ? '' : 'ショートカットを登録できませんでした。通知領域のアイコンから操作できます。';
+  const moveButton = document.querySelector<HTMLButtonElement>('#move-mode')!;
+  moveButton.textContent = value.moving ? '移動をやめる' : 'しずくをつかんで移動';
+  moveButton.disabled = !value.loaded;
+  moveButton.setAttribute('aria-pressed', String(value.moving));
+  document.querySelector('#move-hint')!.textContent = value.moving ? 'しずくをドラッグしてね。操作がなければ30秒で戻ります。' : '矢印でも位置を調整できます。';
 }
 document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach(button => {
   button.addEventListener('click', async () => {
