@@ -43,6 +43,7 @@ const report = {
     memory: 'Sum of process memory KiB divided by 1024. Working Set can double-count shared pages; Private Bytes is allocated private memory, not resident RAM. Means are per-sample averages.',
     phases: 'Startup warmup is excluded. Visible idle and hidden idle are summarized separately. Functional cycles retain snapshots but are not treated as a stable workload or added to idle means.',
     overhead: 'Playwright queries the main process and own renderer every two seconds. No desktop capture or physical input; the Node test driver is outside app process totals.',
+    processes: 'CPU and memory totals use only app.getAppMetrics() processes (processCount in each phase summary). The PID files also include the Playwright-launched wrapper PID for shutdown verification; that wrapper is not added to app CPU or memory totals. Initial app PIDs are populated before warmup starts.',
     sources: ['https://www.electronjs.org/docs/latest/api/structures/cpu-usage', 'https://www.electronjs.org/docs/latest/api/structures/memory-info'],
   },
   phases: [], cycles: [], checks: [], remainingPids: null, userSettingsUnchanged: null,
@@ -66,7 +67,7 @@ const progress = (event, extra = {}) => console.log(JSON.stringify({ event, phas
 const checkpoint = async () => {
   await atomicJson(reportPath, report);
   await atomicJson(path.join(directory, 'pids.json'), [...pids]);
-  await atomicJson(activePath, { directory, reportPath, phase, time: new Date().toISOString(), pids: [...pids], status: report.status, plan });
+  await atomicJson(activePath, { directory, reportPath, phase, time: new Date().toISOString(), pids: [...pids], pidsReady: !!report.initialSnapshot, status: report.status, plan });
 };
 const inspect = fn => application.evaluate(fn);
 async function snapshot() {
@@ -136,9 +137,10 @@ try {
   progress('start', { directory, reportPath, plan });
   application = await _electron.launch({ executablePath: electron, args: [root], cwd: root,
     env: { ...process.env, SHIZUKU_TEST: '1', SHIZUKU_TEST_DATA: path.basename(directory), SHIZUKU_METRICS: '0' } });
-  const mainPid = application.process().pid;
-  assert.ok(Number.isSafeInteger(mainPid) && mainPid > 0);
-  pids.add(mainPid);
+  const launchPid = application.process().pid;
+  assert.ok(Number.isSafeInteger(launchPid) && launchPid > 0);
+  pids.add(launchPid);
+  report.launchPid = launchPid;
   page = await application.firstWindow();
   await page.waitForFunction(() => window.__diagnostics?.loaded, null, { timeout: 20_000 });
   report.versions = await inspect(() => process.versions);
@@ -148,6 +150,10 @@ try {
   });
   assert.equal(await inspect(() => globalThis.__shizuku.controls()), null, 'No controls window belongs in the steady workload.');
   await page.waitForFunction(() => window.__diagnostics.visible && innerWidth === 300 && innerHeight === 440);
+  // Publish the real app PIDs before external GPU sampling can start at warmup.
+  // This discovery snapshot is outside both warmup and the measured idle phases.
+  report.initialSnapshot = await snapshot();
+  report.initialAppPids = report.initialSnapshot.processes.map(process => process.pid);
   await stablePhase('warmup', plan.warmupMs, true, false);
   const visible = await stablePhase('visible', plan.visibleMs, true, true);
   report.checks.push('Standard-size loaded idle rendering remained alive for the complete five-minute visible phase.');
