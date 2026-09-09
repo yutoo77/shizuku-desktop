@@ -1,6 +1,6 @@
 import {
   ACESFilmicToneMapping, Box3, DirectionalLight, Euler, HemisphereLight, LoadingManager, Material,
-  Object3D, OrthographicCamera, Quaternion, Scene, SRGBColorSpace, Texture,
+  Object3D, OrthographicCamera, Quaternion, Scene, SkinnedMesh, SRGBColorSpace, Texture,
   Vector3, WebGLRenderer,
 } from 'three';
 import { GLTFLoader, type GLTFParser } from 'three/addons/loaders/GLTFLoader.js';
@@ -8,6 +8,9 @@ import { VRMHumanBoneName, VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/th
 import { rgbaToShape } from './move-policy.mjs';
 import { CALL_RESPONSE_MS, callExpression, sampleCallResponse } from './call-response.mjs';
 import { ModelImages, trackModelImages } from './model-images';
+import { STANDING_POSE, SITTING_POSE, POSTURE_TRANSITION_MS, postureEase } from './posture.mjs';
+
+export type Posture = 'standing' | 'sitting';
 
 export interface AvatarDiagnostics {
   loaded: boolean;
@@ -18,6 +21,9 @@ export interface AvatarDiagnostics {
   moving: boolean;
   reacting: boolean;
   reactionProgress: number;
+  posture: Posture;
+  postureBlend: number;
+  changingPosture: boolean;
   renderedFrames: number;
   fps: number;
   modelName: string | null;
@@ -60,10 +66,20 @@ export class Avatar {
   private modelWidth = 0;
   private modelHeight = 0;
   private blinkNames: string[] = [];
+  private posture: Posture = 'standing';
+  private postureMix = 0;
+  private postureFrom = 0;
+  private postureElapsed = POSTURE_TRANSITION_MS;
+  private needsFraming = false;
+  private readonly modelOrigin = new Vector3();
+  private modelYaw = 0;
+  private standingWidth = 0;
+  private standingHeight = 0;
 
   public readonly diagnostics: AvatarDiagnostics = {
     loaded: false, visible: true, animating: false, contextLost: false, reducedMotion: false, moving: false,
     reacting: false, reactionProgress: 0,
+    posture: 'standing', postureBlend: 0, changingPosture: false,
     renderedFrames: 0, fps: 0, modelName: null, triangles: 0, drawCalls: 0,
     geometries: 0, textures: 0, loadTimeMs: null, pixelRatio: 1, error: null,
   };
@@ -113,14 +129,30 @@ export class Avatar {
     }
     try {
       this.vrm = vrm;
+      // Three caches a skinned mesh's first bounding sphere. Bent legs can move
+      // shoes out of that old sphere, incorrectly culling them after sitting.
+      // This scene contains one fully framed avatar: keep its deformed parts
+      // visible without recomputing every mesh sphere in the idle loop.
+      vrm.scene.traverse(object => { if (object instanceof SkinnedMesh) object.frustumCulled = false; });
       this.scene.add(vrm.scene);
-      for (const name of [VRMHumanBoneName.Head, VRMHumanBoneName.Chest,
-        VRMHumanBoneName.LeftUpperArm, VRMHumanBoneName.RightUpperArm]) {
-        const node = vrm.humanoid.getNormalizedBoneNode(name);
+      for (const name of [VRMHumanBoneName.Head, VRMHumanBoneName.Chest, ...Object.keys(STANDING_POSE)]) {
+        const node = vrm.humanoid.getNormalizedBoneNode(name as VRMHumanBoneName);
         if (node) this.bones.set(name, { node, rest: node.quaternion.clone() });
       }
-      this.pose(VRMHumanBoneName.LeftUpperArm, 0, 0, -Math.PI * 0.4);
-      this.pose(VRMHumanBoneName.RightUpperArm, 0, 0, Math.PI * 0.4);
+      this.modelOrigin.copy(vrm.scene.position);
+      this.modelYaw = vrm.scene.rotation.y;
+      // Use the same apparent body scale when sitting. Measure the standing
+      // reference once, including when the saved startup posture is sitting.
+      const selectedMix = this.postureMix;
+      this.postureMix = 0;
+      this.applyPosture();
+      if (this.hasContext()) vrm.update(0); else vrm.humanoid.update();
+      vrm.scene.updateMatrixWorld(true);
+      const standingSize = new Box3().setFromObject(vrm.scene, true).getSize(new Vector3());
+      this.standingWidth = standingSize.x;
+      this.standingHeight = standingSize.y;
+      this.postureMix = selectedMix;
+      this.applyPosture();
       const expressions = Object.keys(vrm.expressionManager?.expressionMap ?? {});
       this.reactionExpression = callExpression(expressions);
       this.blinkNames = expressions.includes('blink') ? ['blink']
@@ -129,19 +161,7 @@ export class Avatar {
       // Loading may finish during an outage. Apply only the rest pose needed for
       // bounds; animation, expressions and spring simulation wait for recovery.
       else vrm.humanoid.update();
-      vrm.scene.updateMatrixWorld(true);
-      // Precise bounds include the skinned rest pose after lowering the arms.
-      const bounds = new Box3().setFromObject(vrm.scene, true);
-      const size = bounds.getSize(new Vector3());
-      if (bounds.isEmpty() || !Number.isFinite(size.length()) || size.y <= 0) {
-        throw new Error('モデルの大きさを確認できませんでした。');
-      }
-      const center = bounds.getCenter(new Vector3());
-      vrm.scene.position.sub(center);
-      this.modelWidth = size.x;
-      this.modelHeight = size.y;
-      this.camera.position.z = Math.max(6, size.z + size.y * 3);
-      this.camera.far = this.camera.position.z + size.z + size.y * 3;
+      this.framePosture();
       const meta = vrm.meta as unknown as Record<string, unknown>;
       const name = meta.name ?? meta.title;
       this.diagnostics.modelName = typeof name === 'string' ? name : 'VRM';
@@ -173,8 +193,11 @@ export class Avatar {
     this.blinkNames = [];
     this.reactionExpression = null;
     this.elapsed = 0;
+    this.finishPosture();
     this.modelWidth = 0;
     this.modelHeight = 0;
+    this.standingHeight = 0;
+    this.standingWidth = 0;
     this.diagnostics.loaded = false;
     this.diagnostics.modelName = null;
     this.diagnostics.error = null;
@@ -201,7 +224,58 @@ export class Avatar {
     else {
       this.pause();
       this.cancelReaction();
+      this.finishPosture();
     }
+  }
+
+  public setPosture(posture: Posture): void {
+    if (this.disposed || (posture !== 'standing' && posture !== 'sitting') || posture === this.posture) return;
+    this.cancelReaction();
+    this.posture = posture;
+    this.diagnostics.posture = posture;
+    this.postureFrom = this.postureMix;
+    this.postureElapsed = 0;
+    this.diagnostics.changingPosture = true;
+    this.needsFraming = true;
+    if (!this.visible || this.motion.matches || !this.vrm) this.finishPosture();
+    this.resume();
+  }
+
+  private finishPosture(): void {
+    this.postureMix = this.posture === 'sitting' ? 1 : 0;
+    this.postureFrom = this.postureMix;
+    this.postureElapsed = POSTURE_TRANSITION_MS;
+    this.diagnostics.postureBlend = this.postureMix;
+    this.diagnostics.changingPosture = false;
+    this.needsFraming = true;
+  }
+
+  private applyPosture(): void {
+    for (const [name, standing] of Object.entries(STANDING_POSE)) {
+      const sitting = SITTING_POSE[name as keyof typeof SITTING_POSE];
+      this.pose(name, ...standing.map((value, axis) => value + (sitting[axis] - value) * this.postureMix) as [number, number, number]);
+    }
+    if (this.vrm) this.vrm.scene.rotation.y = this.modelYaw + this.postureMix * 0.35;
+  }
+
+  private framePosture(): void {
+    const vrm = this.vrm;
+    if (!vrm) return;
+    vrm.scene.position.copy(this.modelOrigin);
+    vrm.scene.updateMatrixWorld(true);
+    const bounds = new Box3().setFromObject(vrm.scene, true);
+    const size = bounds.getSize(new Vector3());
+    if (bounds.isEmpty() || !Number.isFinite(size.length()) || size.y <= 0) throw new Error('モデルの大きさを確認できませんでした。');
+    const center = bounds.getCenter(new Vector3());
+    vrm.scene.position.x -= center.x;
+    vrm.scene.position.z -= center.z;
+    vrm.scene.position.y += -this.standingHeight / 2 - bounds.min.y;
+    this.modelWidth = Math.max(this.standingWidth, size.x);
+    this.modelHeight = Math.max(this.standingHeight, size.y);
+    this.camera.position.z = Math.max(6, size.z + size.y * 3);
+    this.camera.far = this.camera.position.z + size.z + size.y * 3;
+    this.needsFraming = false;
+    this.resize(false);
   }
 
   /** Accept one short response; repeated calls never queue or prolong it. */
@@ -335,6 +409,7 @@ export class Avatar {
     this.diagnostics.reducedMotion = this.motion.matches;
     this.pause();
     this.cancelReaction();
+    if (this.motion.matches) this.finishPosture();
     this.resume();
   };
 
@@ -343,7 +418,7 @@ export class Avatar {
     const width = Math.max(1, window.innerWidth);
     const height = Math.max(1, window.innerHeight);
     const available = this.hasContext();
-    if (available) this.renderer.setSize(width, height, false);
+    if (available && (this.renderer.domElement.width !== width || this.renderer.domElement.height !== height)) this.renderer.setSize(width, height, false);
     const frameHeight = this.modelHeight > 0
       ? Math.max(this.modelHeight, this.modelWidth / (width / height)) * 1.12 : 2;
     this.camera.top = frameHeight / 2;
@@ -414,6 +489,15 @@ export class Avatar {
     const vrm = this.vrm;
     if (!this.hasContext() || !vrm) return false;
     const time = this.motion.matches ? 0 : this.elapsed;
+    if (this.diagnostics.changingPosture) {
+      this.postureElapsed = Math.min(POSTURE_TRANSITION_MS, this.postureElapsed + delta * 1000);
+      const target = this.posture === 'sitting' ? 1 : 0;
+      this.postureMix = this.postureFrom + (target - this.postureFrom) * postureEase(this.postureElapsed / POSTURE_TRANSITION_MS);
+      this.diagnostics.postureBlend = this.postureMix;
+      this.diagnostics.changingPosture = this.postureElapsed < POSTURE_TRANSITION_MS;
+      this.needsFraming = true;
+    }
+    if (this.needsFraming) this.applyPosture();
     let nod = 0;
     let turn = 0;
     let tilt = 0;
@@ -425,13 +509,16 @@ export class Avatar {
       if (reaction.done) this.cancelReaction(true);
     }
     this.pose(VRMHumanBoneName.Head, Math.sin(time * 0.53) * 0.008 + nod,
-      Math.sin(time * 0.23) * 0.025 + turn, Math.sin(time * 0.31) * 0.012 + tilt);
+      -this.postureMix * 0.2 + Math.sin(time * 0.23) * 0.025 + turn, Math.sin(time * 0.31) * 0.012 + tilt);
     this.pose(VRMHumanBoneName.Chest, Math.sin(time * 1.35) * 0.004, 0, 0);
     const blinkPhase = (time + 1.8) % 5.6;
     const blink = !this.motion.matches && blinkPhase < 0.18
       ? Math.sin(blinkPhase / 0.18 * Math.PI) : 0;
     for (const name of this.blinkNames) vrm.expressionManager?.setValue(name, blink);
     vrm.update(delta);
+    // Precise skin bounds are measured only while changing pose (about 700 ms),
+    // never in the steady idle loop. This keeps bent knees/feet inside the canvas.
+    if (this.needsFraming) this.framePosture();
     return this.renderCurrentFrame();
   }
 

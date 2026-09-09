@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('companion', {
+  onPosture: (callback: (posture: 'standing' | 'sitting') => void) => {
+    const listener = (_event: unknown, posture: unknown) => {
+      if (posture === 'standing' || posture === 'sitting') callback(posture);
+    };
+    ipcRenderer.on('avatar:posture', listener);
+    return () => ipcRenderer.removeListener('avatar:posture', listener);
+  },
   getModel: () => ipcRenderer.invoke('model:read'),
   onCalled: (callback: (expiresAt: number) => void) => {
     const listener = (_event: unknown, expiresAt: number) => callback(expiresAt);

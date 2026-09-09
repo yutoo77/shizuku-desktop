@@ -197,6 +197,12 @@ try {
     updateVisibility();
   }));
   unsubscribers.push(window.companion.onModelChanged(() => { void reload(); }));
+  unsubscribers.push(window.companion.onPosture(posture => {
+    if (disposed || avatar?.diagnostics.posture === posture) return;
+    pendingCall = null;
+    cancelMoveMode();
+    avatar?.setPosture(posture);
+  }));
   unsubscribers.push(window.companion.onCalled(expiresAt => {
     if (disposed || loading || !windowVisible || !avatar?.diagnostics.loaded || avatar.diagnostics.contextLost || !Number.isFinite(expiresAt)) return;
     pendingCall = { revision, expires: expiresAt };

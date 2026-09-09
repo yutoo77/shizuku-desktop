@@ -14,8 +14,10 @@ button:disabled { cursor: default; opacity: 0.55; }
 button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px solid #3c71bc; outline-offset: 3px; }
 .size-options { border: 0; padding: 0; margin: 0 0 12px; min-inline-size: 0; }
 .size-options legend { width: 100%; padding: 0; margin-bottom: 5px; text-align: center; }
-.size-choices { display: flex; justify-content: center; gap: 8px; }
-.size-choices label { display: flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 7px; cursor: pointer; }
+.appearance-options { display: flex; justify-content: space-between; gap: 8px; }
+.appearance-options label { white-space: nowrap; }
+.size-choices { display: flex; justify-content: center; gap: 3px; }
+.size-choices label { display: flex; align-items: center; gap: 4px; padding: 3px 5px; border-radius: 7px; cursor: pointer; }
 .size-choices label:has(:checked) { background: #e8f0fc; }
 .size-choices label:has(:disabled) { cursor: default; opacity: 0.55; }
 .size-choices input { accent-color: #3c71bc; margin: 0; }

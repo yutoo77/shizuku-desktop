@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { defaultBounds, clampBounds, followControlMove, normalizeScale, avatarSize, resizeAvatarBounds } from './geometry.mjs';
 import { MAX_MODEL_BYTES, validateModel } from './model-policy.mjs';
 import { validateShape, containsPoint, dragBounds } from './move-policy.mjs';
+import { normalizePosture } from './posture.mjs';
 
 const root = path.resolve(__dirname, '..');
 const work = path.join(root, 'work');
@@ -21,6 +22,7 @@ let tray: Tray | null = null;
 let trayMenu: Menu | null = null;
 let modelPath = '';
 let scale = 100;
+let posture: 'standing' | 'sitting' = 'standing';
 let savedBounds: Rectangle | undefined;
 let loadError = '';
 let modelLoaded = false;
@@ -72,7 +74,7 @@ function placeAvatar(bounds: Rectangle) {
 }
 function save() {
   if (avatar && !avatar.isDestroyed()) savedBounds = avatarBounds(avatar);
-  const value = JSON.stringify({ modelPath, bounds: savedBounds, scale }, null, 2);
+  const value = JSON.stringify({ modelPath, bounds: savedBounds, scale, posture }, null, 2);
   writeQueue = writeQueue.then(() => writeFile(configPath, value, 'utf8')).catch(error => console.error('Configuration could not be saved:', error.code));
   return writeQueue;
 }
@@ -114,6 +116,15 @@ function setScale(value: unknown) {
   const bounds = resizeAvatarBounds(avatarBounds(avatar), value, area());
   scale = value;
   placeAvatar(bounds);
+  saveSoon();
+  updateMenu();
+}
+function setPosture(value: unknown) {
+  if (value !== 'standing' && value !== 'sitting') throw new Error('Unknown posture');
+  if (quitting || !avatar || avatar.isDestroyed() || value === posture) return;
+  setMoveMode(false);
+  posture = value;
+  avatar.webContents.send('avatar:posture', posture);
   saveSoon();
   updateMenu();
 }
@@ -190,6 +201,10 @@ function updateMenu() {
     { label: visible ? '隠す' : '表示する', click: () => setVisible(!visible) },
     { label: moveMode ? '移動をやめる' : 'しずくをつかんで移動', enabled: modelLoaded, click: () => setMoveMode(!moveMode) },
     { label: '位置を動かす…', click: openControls },
+    { label: '姿勢', submenu: [
+      { label: '立つ', type: 'radio', checked: posture === 'standing', click: () => setPosture('standing') },
+      { label: '座る', type: 'radio', checked: posture === 'sitting', click: () => setPosture('sitting') },
+    ] },
     { label: '大きさ', submenu: [
       { label: '小', type: 'radio', checked: scale === 80, click: () => setScale(80) },
       { label: '標準', type: 'radio', checked: scale === 100, click: () => setScale(100) },
@@ -276,6 +291,8 @@ async function action(value: string) {
   else if (value === 'size-small') setScale(80);
   else if (value === 'size-standard') setScale(100);
   else if (value === 'size-large') setScale(120);
+  else if (value === 'stand') setPosture('standing');
+  else if (value === 'sit') setPosture('sitting');
   else if (value === 'quit') app.quit();
   else if (['left', 'right', 'up', 'down'].includes(value) && avatar) {
     setMoveMode(false);
@@ -292,6 +309,7 @@ async function start() {
     const config = JSON.parse((await readFile(configPath, 'utf8')).replace(/^\uFEFF/, ''));
     if (typeof config.modelPath === 'string') modelPath = config.modelPath;
     scale = normalizeScale(config.scale);
+    posture = normalizePosture(config.posture);
     if (config.bounds && typeof config.bounds === 'object') savedBounds = clampBounds({ ...config.bounds, ...avatarSize(scale, area()) }, area());
   } catch { /* Missing or malformed local config returns to safe defaults. */ }
   const allowedFiles = new Set(['index.html','controls.html','renderer.js','controls.js','style.css'].map(file => pathToFileURL(path.join(__dirname,file)).href));
@@ -343,6 +361,7 @@ async function start() {
     if (!state.ok) setMoveMode(false);
     loadError = state.ok ? '' : String(state.error ?? 'モデル未選択').slice(0, 180);
     avatar?.webContents.send('avatar:visibility', visible);
+    avatar?.webContents.send('avatar:posture', posture);
     updateMenu();
   });
   ipcMain.handle('controls:action', async (event, value) => {
@@ -351,7 +370,7 @@ async function start() {
   });
   ipcMain.handle('controls:status', event => {
     if (!trusted(event, controls, controlsUrl)) throw new Error('Denied sender');
-    return { model: modelPath ? path.basename(modelPath) : '', error: loadError, shortcuts, moving: moveMode, loaded: modelLoaded, scale };
+    return { model: modelPath ? path.basename(modelPath) : '', error: loadError, shortcuts, moving: moveMode, loaded: modelLoaded, scale, posture };
   });
   tray = new Tray(icon());
   tray.on('double-click', () => setVisible(!visible));
@@ -359,6 +378,7 @@ async function start() {
     ['CommandOrControl+Alt+Shift+S', () => setVisible(!visible)],
     ['CommandOrControl+Alt+Shift+R', reset],
     ['CommandOrControl+Alt+Shift+C', callAvatar],
+    ['CommandOrControl+Alt+Shift+P', () => setPosture(posture === 'standing' ? 'sitting' : 'standing')],
     ['CommandOrControl+Alt+Shift+M', () => setMoveMode(!moveMode)],
     ['CommandOrControl+Alt+Shift+Q', () => app.quit()],
   ];
@@ -380,7 +400,7 @@ async function start() {
     avatar: () => avatar, controls: () => controls, setVisible, reset, openControls, action,
     tray: () => tray, trayMenu: () => trayMenu,
     setMoveMode, moveState: () => ({ active: moveMode, revision: moveRevision, shape: moveShape, dragging: !!moveStart }),
-    setScale, status: () => ({ visible, modelLoaded, contextRecovering, loadError, shortcuts, scale }), metrics: () => app.getAppMetrics(),
+    setScale, setPosture, status: () => ({ visible, modelLoaded, contextRecovering, loadError, shortcuts, scale, posture }), metrics: () => app.getAppMetrics(),
   };
 }
 

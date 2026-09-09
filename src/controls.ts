@@ -4,6 +4,7 @@ type CompanionStatus = Awaited<ReturnType<Window['companion']['getStatus']>>;
 type CompanionAction = Parameters<Window['companion']['action']>[0];
 const buttons = document.querySelectorAll<HTMLButtonElement>('button[data-action]');
 const sizes = document.querySelectorAll<HTMLInputElement>('input[name="size"]');
+const postures = document.querySelectorAll<HTMLInputElement>('input[name="posture"]');
 const moveButton = document.querySelector<HTMLButtonElement>('#move-mode')!;
 const callButton = document.querySelector<HTMLButtonElement>('#call')!;
 let currentStatus: CompanionStatus | null = null;
@@ -18,6 +19,10 @@ function renderStatus(): void {
   for (const radio of sizes) {
     radio.disabled = busy || currentStatus === null;
     radio.checked = Number(radio.value) === currentStatus?.scale;
+  }
+  for (const radio of postures) {
+    radio.disabled = busy || currentStatus === null;
+    radio.checked = radio.value === currentStatus?.posture;
   }
   document.querySelector('#error')!.textContent = operationError || currentStatus?.error || '';
   if (!currentStatus) return;
@@ -62,7 +67,7 @@ async function perform(action: CompanionAction): Promise<void> {
 for (const button of buttons) {
   button.addEventListener('click', () => void perform(button.dataset.action as CompanionAction));
 }
-for (const radio of sizes) {
+for (const radio of [...sizes, ...postures]) {
   radio.addEventListener('change', () => {
     if (radio.checked) void perform(radio.dataset.action as CompanionAction);
   });
