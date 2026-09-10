@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>しずくとの会話</title>
+  <link rel="stylesheet" href="dialogue.css">
+</head>
+<body>
+  <header>
+    <div class="identity"><h1>月白しずく</h1><span class="demo">お試し・AI未接続</span></div>
+    <details id="options">
+      <summary aria-label="会話の設定">···</summary>
+      <div class="options-panel">
+        <p>定型文の返事です。AIへの送信はありません。</p>
+        <p>会話は保存しません。この窓を閉じると消えます。</p>
+        <p>入力は1回1000文字まで。発言は直近40件を表示します。</p>
+        <button id="clear" type="button">会話を消す</button>
+      </div>
+    </details>
+    <button id="close" class="icon-button" type="button" aria-label="会話を閉じる">×</button>
+  </header>
+  <section class="conversation" aria-label="会話">
+    <p id="empty">うん、ここにいるよ。</p>
+    <div id="messages" role="log" aria-label="会話の履歴" aria-live="polite" aria-relevant="additions text"></div>
+  </section>
+  <form id="composer">
+    <p id="error" role="alert"></p>
+    <label class="sr-only" for="message">話しかける</label>
+    <textarea id="message" aria-label="話しかける" placeholder="話しかける…" rows="2" maxlength="1000" enterkeyhint="send" spellcheck="false"></textarea>
+    <div class="composer-actions">
+      <span id="pending" role="status" aria-live="polite"></span>
+      <button id="cancel" type="button" hidden>中止</button>
+      <button id="send" type="submit" disabled>送る</button>
+    </div>
+  </form>
+  <script type="module" src="dialogue.js"></script>
+</body>
+</html>

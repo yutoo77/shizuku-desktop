@@ -6,6 +6,8 @@
 
 VRM の読み込み後の骨格最適化と腕の基本姿勢について、[adaptive-vrm-dialogue-agent の commit 445b0c7](https://github.com/yutoo77/adaptive-vrm-dialogue-agent/tree/445b0c7) の `frontend/src/vrm/modelLoader.ts` と `frontend/src/vrm/CharacterController.ts` を参照しました。既存ビューアー全体は移植せず、常駐表示用の小さな実装を新設しています。再利用元の MIT の著作権表示と許諾文を保持します。
 
+小さな会話の試作では、同commitの`backend/app/character_profile.py`にある月白しずくの名前・一人称・控えめな返答方針を参照しています。会話セッションと定型返答はこのアプリ用に作成し、既存のBackendや外部AI接続を起動・移植していません。
+
 ```text
 MIT License
 

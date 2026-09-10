@@ -10,6 +10,7 @@ import { normalizePosture } from './posture.mjs';
 import { normalizeFacing, normalizeFavorite, seatBounds, validateAnchor } from './placement.mjs';
 import { followPlacement } from './follow-policy.mjs';
 import { WindowTracker, type TrackedWindow, type TrackingEvent, type FixtureWindow } from './window-tracker';
+import { DialogueWindowController } from './dialogue-window';
 
 const root = path.resolve(__dirname, '..');
 const work = path.join(root, 'work');
@@ -21,6 +22,8 @@ const avatarUrl = pathToFileURL(path.join(__dirname, 'index.html')).href;
 const controlsUrl = pathToFileURL(path.join(__dirname, 'controls.html')).href;
 let avatar: BrowserWindow | null = null;
 let controls: BrowserWindow | null = null;
+let dialogue: DialogueWindowController | null = null;
+let dialogueTestReply: ((text: string, context: { signal: AbortSignal; history: unknown[] }) => Promise<string>) | undefined;
 let tray: Tray | null = null;
 let trayMenu: Menu | null = null;
 let modelPath = '';
@@ -74,6 +77,7 @@ function beginSystemRest(reason: 'suspend' | 'lock') {
   restReasons.add(reason);
   if (restSnapshot) return;
   restSnapshot = { visible, controlsVisible: !!controls?.isVisible(), following: !!following };
+  dialogue?.close();
   stopFollowing(false); cancelSeat(); setMoveMode(false);
   tracker?.setPaused(true);
   applyVisibility(false);
@@ -137,6 +141,7 @@ function saveSoon() {
   saveTimer = setTimeout(() => void save(), 400);
 }
 function setVisible(next: boolean) {
+  if (!next) dialogue?.close();
   if (systemResting()) { if (!next && restSnapshot) restSnapshot.visible = false; return; }
   stopFollowing(false);
   applyVisibility(next);
@@ -172,6 +177,7 @@ function callAvatar() {
   setMoveMode(false);
   if (!visible) setVisible(true);
   avatar.webContents.send('avatar:called', Date.now() + 1000);
+  dialogue?.open();
 }
 function setScale(value: unknown) {
   if (typeof value !== 'number' || ![80, 100, 120].includes(value)) throw new Error('Unknown size');
@@ -669,7 +675,7 @@ async function start() {
     favorite = normalizeFavorite(config.favorite, area());
     if (config.bounds && typeof config.bounds === 'object') savedBounds = clampBounds({ ...config.bounds, ...avatarSize(scale, area()) }, area());
   } catch { /* Missing or malformed local config returns to safe defaults. */ }
-  const allowedFiles = new Set(['index.html','controls.html','renderer.js','controls.js','style.css'].map(file => pathToFileURL(path.join(__dirname,file)).href));
+  const allowedFiles = new Set(['index.html','controls.html','renderer.js','controls.js','style.css','dialogue.html','dialogue.js','dialogue.css'].map(file => pathToFileURL(path.join(__dirname,file)).href));
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   session.defaultSession.on('will-download', event => event.preventDefault());
@@ -745,6 +751,13 @@ async function start() {
     if (!trusted(event, controls, controlsUrl)) throw new Error('Denied sender');
     return { model: modelPath ? path.basename(modelPath) : '', error: loadError, shortcuts, moving: moveMode, pointerPlacing: !!pointerPlacement, placementEscape, loaded: modelLoaded, scale, posture, facing, quiet, hasFavorite: !!favorite, seatCountdown, seating: !!pendingSeat, placementMessage, following: !!following, followCountdown, followReady: !!tracker?.ready, followMessage: followMessage() };
   });
+  dialogue = new DialogueWindowController({
+    url: pathToFileURL(path.join(__dirname, 'dialogue.html')).href,
+    preload: path.join(__dirname, 'dialogue-preload.cjs'), icon: icon(), area,
+    anchor: () => avatar ? avatarBounds(avatar) : defaultBounds(area(), scale),
+    canOpen: () => !quitting && !systemResting(), secure: secureWindow,
+    getReply: () => process.env.SHIZUKU_TEST === '1' ? dialogueTestReply : undefined,
+  });
   tray = new Tray(icon());
   tray.on('double-click', () => setVisible(!visible));
   const bindings: Array<[string, () => void]> = [
@@ -764,7 +777,7 @@ async function start() {
     if (!systemResting() || key.endsWith('+Q')) handler();
   })).every(Boolean);
   updateMenu();
-  screen.on('display-metrics-changed', () => { stopFollowing(true); cancelSeat(); setMoveMode(false); if (avatar && !avatar.isDestroyed()) placeAvatar(avatarBounds(avatar)); updateMenu(); });
+  screen.on('display-metrics-changed', () => { dialogue?.close(); stopFollowing(true); cancelSeat(); setMoveMode(false); if (avatar && !avatar.isDestroyed()) placeAvatar(avatarBounds(avatar)); updateMenu(); });
   tracker = new WindowTracker(onTrackedWindow, available => {
     if (quitting) return;
     if (!available) { stopFollowing(true); placementMessage = '窓の追従を使うには、アプリを再起動してください。'; }
@@ -788,6 +801,9 @@ async function start() {
   // Development-only inspection inside the main process; not exposed through IPC.
   if (process.env.SHIZUKU_TEST === '1') (globalThis as any).__shizuku = {
     avatar: () => avatar, controls: () => controls, setVisible, reset, openControls, action,
+    dialogue: () => dialogue?.window(), dialogueState: () => dialogue?.snapshot(),
+    openDialogue: () => dialogue?.open(), closeDialogue: () => dialogue?.close(),
+    setDialogueReply: (reply: typeof dialogueTestReply) => { dialogueTestReply = reply; },
     tray: () => tray, trayMenu: () => trayMenu,
     setMoveMode, moveState: () => ({ active: moveMode, revision: moveRevision, shape: moveShape, dragging: !!moveStart }),
     togglePointerPlacement, finishPointerPlacement, tickPointerPlacement,
@@ -825,6 +841,7 @@ else {
     if (quitting) return;
     stopFollowing(false); cancelSeat(); setMoveMode(false);
     quitting = true;
+    dialogue?.dispose(); dialogue = null;
     avatarPlacementGeneration++;
     clearInterval(metricsTimer);
     clearTimeout(saveTimer);

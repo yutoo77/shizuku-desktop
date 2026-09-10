@@ -1,0 +1,44 @@
+name: Windows checks
+
+# Manual first: confirm the owner's Actions allowance before enabling push/PR runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Model-free checks (Windows x64 / Node 24)
+    runs-on: windows-2025
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      # This job builds the app but never launches Electron or a browser.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          architecture: x64
+          package-manager-cache: false
+      - name: Install locked dependencies
+        id: install
+        run: npm ci --no-audit --no-fund
+      - name: Type check, unit tests and build
+        run: npm run check
+      - name: Audit dependencies
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm audit
