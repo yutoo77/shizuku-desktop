@@ -1,6 +1,6 @@
 # Windowsでの自動検査
 
-[Windows checks](../.github/workflows/windows-check.yml) は、GitHubの標準Windows x64環境とNode.js 24で、モデル不要の検査を行う。初期設定は手動実行のみで、pushやPR作成では起動しない。
+[Windows checks](../.github/workflows/windows-check.yml) は、GitHubの標準Windows x64環境とNode.js 24で、モデル不要の検査を行う。2026-09-10にリポジトリのPublic状態を確認してから、mainへのpushとmain向けpull requestでの自動実行を有効にした。手動実行も可能。
 
 ## 検査の範囲
 
@@ -16,20 +16,20 @@ VRM、`local.config.json`、APIキーは不要。Electronやブラウザーの�
 
 この新規導入では、npmから`esbuild@0.28.2`のpostinstallが`allowScripts`未指定という警告が出た。インストールとBuildは成功したが、警告を消すためにスクリプトの許可範囲を広げる変更は行っていない。
 
-## 初回の実行
+## 公開後の実行と料金
 
-PrivateリポジトリのActionsはアカウントの無料枠を使い、枠を超えると設定に応じて課金される。標準runnerでも無条件に無料ではない。[GitHub公式の料金説明](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
+Publicリポジトリで使う標準のGitHub-hosted runnerの実行は無料。このworkflowは標準の`windows-2025` x64を使用し、有料のlarger runner、成果物の保存、キャッシュは使わない。[GitHub公式の料金説明](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
 
-2026-09-10の読み取り確認では、認証済みCLIからアカウントのプラン・残り無料枠を取得できなかった。利用量APIは`user`権限不足の404だったため、課金が止まる設定かどうかも未確認。認証範囲、支払い方法、予算設定は変更していない。最大10分という設定は実行時間の上限であり、無料枠を超えない保証ではない。
+公開前はPrivateの残り無料枠をAPIで確認できなかったため手動設定に留め、GitHub側では実行していなかった。今回はPublic化の明示的な許可と公開状態の確認後に実行した。アカウント全体のプラン、予算、認証範囲は変更していない。今後Privateへ戻す場合やrunnerの種類を変える場合は、実行前に料金条件を確認する。最大10分という設定自体は無料の保証ではない。
 
-残り無料枠と超過利用の予算をGitHubの **Settings → Billing & licensing** で確認してから、次の手順で1回実行する。
+手動で検査し直すときの手順：
 
-1. このworkflowを既定branchの`main`にpushする。
+1. 検査したい変更をpushする。mainへのpushでは自動実行されるため、同じ内容の手動実行を重ねる必要はない。
 2. リポジトリの **Actions → Windows checks → Run workflow** を開く。
 3. 検査したいbranchを選び、実行する。
 4. 成否、commit SHA、所要時間を確認する。失敗時は原因を調べてから再実行する。
 
-GitHub側の実行成功が確認できてから、自動検査が通ったと記載する。ローカルの成功だけではGitHub runnerでの成功を意味しない。日常のpush/PR自動実行への切替は、利用枠と予算が確認できてから行う。
+初回は`9bb3f07`の[Windows checks](https://github.com/yutoo77/shizuku-desktop/actions/runs/34444628787)が成功。標準Windows x64 / Node.js 24.20.0で、型チェック・65単体テスト・Buildが通り、`npm audit`は既知の脆弱性0件。ジョブの実行は34秒だった。最新の変更については[Actions一覧](https://github.com/yutoo77/shizuku-desktop/actions/workflows/windows-check.yml)で対象commitと成否を確認する。ローカルの成功や過去のCI成功だけで、以後の変更も成功したとは扱わない。
 
 ## 参照した公式資料
 
