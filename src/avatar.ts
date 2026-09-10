@@ -7,7 +7,7 @@ import { GLTFLoader, type GLTFParser } from 'three/addons/loaders/GLTFLoader.js'
 import { VRMHumanBoneName, VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
 import { rgbaToShape } from './move-policy.mjs';
 import { CALL_RESPONSE_MS, callExpression, sampleCallResponse } from './call-response.mjs';
-import { ModelImages, trackModelImages } from './model-images';
+import { ModelImages, trackModelImages, type TextureQuality } from './model-images';
 import { STANDING_POSE, SITTING_POSE, POSTURE_TRANSITION_MS, postureEase } from './posture.mjs';
 
 export type Posture = 'standing' | 'sitting';
@@ -40,6 +40,9 @@ export interface AvatarDiagnostics {
   drawCalls: number;
   geometries: number;
   textures: number;
+  textureQuality: TextureQuality;
+  resizedImages: number;
+  imageResizeFallbacks: number;
   loadTimeMs: number | null;
   pixelRatio: number;
   error: string | null;
@@ -98,7 +101,8 @@ export class Avatar {
     mouthVowel: null, mouthWeight: 0, mouthWeights: { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 },
     posture: 'standing', postureBlend: 0, changingPosture: false,
     renderedFrames: 0, fps: 0, modelName: null, triangles: 0, drawCalls: 0,
-    geometries: 0, textures: 0, loadTimeMs: null, pixelRatio: 1, error: null,
+    geometries: 0, textures: 0, textureQuality: 'original', resizedImages: 0, imageResizeFallbacks: 0,
+    loadTimeMs: null, pixelRatio: 1, error: null,
   };
 
   constructor(
@@ -133,13 +137,14 @@ export class Avatar {
     this.resize();
   }
 
-  public async load(buffer: ArrayBuffer): Promise<boolean> {
+  public async load(buffer: ArrayBuffer, textureQuality: TextureQuality = 'original'): Promise<boolean> {
     this.clear();
+    this.diagnostics.textureQuality = textureQuality;
     const version = this.loadVersion;
     const images = new ModelImages();
     this.modelImages = images;
     const started = performance.now();
-    const vrm = await parseModel(buffer, images);
+    const vrm = await parseModel(buffer, images, textureQuality);
     if (this.disposed || version !== this.loadVersion) {
       VRMUtils.deepDispose(vrm.scene);
       images.dispose();
@@ -184,6 +189,8 @@ export class Avatar {
       const name = meta.name ?? meta.title;
       this.diagnostics.modelName = typeof name === 'string' ? name : 'VRM';
       this.diagnostics.loaded = true;
+      this.diagnostics.resizedImages = images.resizedCount;
+      this.diagnostics.imageResizeFallbacks = images.fallbackCount;
       this.diagnostics.loadTimeMs = Math.round(performance.now() - started);
       this.resize();
       this.resume();
@@ -223,6 +230,8 @@ export class Avatar {
     this.diagnostics.modelName = null;
     this.diagnostics.error = null;
     this.diagnostics.loadTimeMs = null;
+    this.diagnostics.resizedImages = 0;
+    this.diagnostics.imageResizeFallbacks = 0;
     this.diagnostics.triangles = 0;
     this.diagnostics.drawCalls = 0;
     this.diagnostics.geometries = 0;
@@ -657,7 +666,7 @@ export class Avatar {
   }
 }
 
-async function parseModel(buffer: ArrayBuffer, images: ModelImages): Promise<VRM> {
+async function parseModel(buffer: ArrayBuffer, images: ModelImages, textureQuality: TextureQuality): Promise<VRM> {
   const manager = new LoadingManager();
   manager.setURLModifier(url => {
     if (url.startsWith('data:') || url.startsWith('blob:')) return url;
@@ -668,7 +677,7 @@ async function parseModel(buffer: ArrayBuffer, images: ModelImages): Promise<VRM
   let parsedScene: Object3D | null = null;
   loader.register(parser => {
     parsers.push(parser);
-    trackModelImages(parser, images);
+    trackModelImages(parser, images, textureQuality);
     return {
       name: 'LocalEmbeddedResourcesOnly',
       beforeRoot: async () => {

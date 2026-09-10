@@ -14,6 +14,7 @@
     "smoke": "node scripts/smoke.mjs",
     "soak": "node scripts/soak.mjs",
     "test:resources": "node scripts/resources.mjs",
+    "test:texture-quality": "node scripts/texture-quality.mjs",
     "test:context": "node scripts/context-recovery.mjs",
     "test:postures": "node scripts/postures.mjs",
     "test:placement": "node scripts/placement.mjs",

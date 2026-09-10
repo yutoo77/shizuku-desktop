@@ -40,6 +40,7 @@ let scale = 100;
 let posture: 'standing' | 'sitting' = 'standing';
 let facing: 'left' | 'right' = 'right';
 let quiet = false;
+let textureQuality: 'original' | 'compact' = 'original';
 let favorite: ReturnType<typeof normalizeFavorite> = null;
 let seatRevision = 0;
 let pendingSeat: { revision: number; point: { x: number; y: number }; followId?: number } | null = null;
@@ -140,7 +141,7 @@ function placeAvatar(bounds: Rectangle) {
 }
 function save() {
   if (avatar && !avatar.isDestroyed()) savedBounds = pointerPlacement ? { ...pointerPlacement.bounds } : avatarBounds(avatar);
-  const value = JSON.stringify({ modelPath, bounds: savedBounds, scale, posture, facing, quiet, favorite }, null, 2);
+  const value = JSON.stringify({ modelPath, bounds: savedBounds, scale, posture, facing, quiet, textureQuality, favorite }, null, 2);
   writeQueue = writeQueue.then(() => writeFile(configPath, value, 'utf8')).catch(error => console.error('Configuration could not be saved:', error.code));
   return writeQueue;
 }
@@ -220,6 +221,25 @@ function setPresence(nextFacing: unknown, nextQuiet: unknown) {
   setMoveMode(false);
   facing = nextFacing; quiet = nextQuiet;
   avatar.webContents.send('avatar:presence', { facing, quiet });
+  saveSoon(); updateMenu();
+}
+function setTextureQuality(value: unknown) {
+  if (value !== 'original' && value !== 'compact') throw new Error('Unknown texture quality');
+  if (quitting || systemResting() || choosing || !avatar || avatar.isDestroyed() || value === textureQuality) return;
+  dialogue?.stopVoice();
+  cancelWindowSelection('');
+  stopFollowing(false);
+  cancelSeat();
+  setMoveMode(false);
+  textureQuality = value;
+  modelLoaded = false;
+  // A quality change does not restore a lost WebGL context. Keep the outage
+  // state until the renderer reports its actual availability.
+  loadError = modelPath ? 'モデルを読み直しています。' : '';
+  placementMessage = '';
+  // Reload only our renderer. The selected file, location, visibility and focus
+  // stay under the user's control; following requires a new explicit selection.
+  avatar.webContents.send('model:changed');
   saveSoon(); updateMenu();
 }
 function cancelSeat() {
@@ -654,6 +674,8 @@ async function action(value: string) {
   else if (value === 'face-left') setPresence('left', quiet);
   else if (value === 'face-right') setPresence('right', quiet);
   else if (value === 'quiet') setPresence(facing, !quiet);
+  else if (value === 'texture-original') setTextureQuality('original');
+  else if (value === 'texture-compact') setTextureQuality('compact');
   else if (value === 'seat-countdown') scheduleSeat();
   else if (value === 'seat-here') seatAtPoint(screen.getCursorScreenPoint());
   else if (value === 'follow-window') startFollowing();
@@ -682,6 +704,7 @@ async function start() {
     posture = normalizePosture(config.posture);
     facing = normalizeFacing(config.facing);
     quiet = config.quiet === true;
+    textureQuality = config.textureQuality === 'compact' ? 'compact' : 'original';
     favorite = normalizeFavorite(config.favorite, area());
     if (config.bounds && typeof config.bounds === 'object') savedBounds = clampBounds({ ...config.bounds, ...avatarSize(scale, area()) }, area());
   } catch { /* Missing or malformed local config returns to safe defaults. */ }
@@ -740,6 +763,10 @@ async function start() {
     if (!trusted(event, avatar, avatarUrl)) throw new Error('Denied sender');
     return modelPath ? readModel(modelPath) : null;
   });
+  ipcMain.handle('model:quality', event => {
+    if (!trusted(event, avatar, avatarUrl)) throw new Error('Denied sender');
+    return textureQuality;
+  });
   ipcMain.on('avatar:ready', (event, state) => {
     if (!trusted(event, avatar, avatarUrl) || !state || typeof state.ok !== 'boolean') return;
     if (state.recovering !== undefined && typeof state.recovering !== 'boolean') return;
@@ -759,7 +786,7 @@ async function start() {
   });
   ipcMain.handle('controls:status', event => {
     if (!trusted(event, controls, controlsUrl)) throw new Error('Denied sender');
-    return { model: modelPath ? path.basename(modelPath) : '', error: loadError, shortcuts, moving: moveMode, pointerPlacing: !!pointerPlacement, placementEscape, loaded: modelLoaded, scale, posture, facing, quiet, hasFavorite: !!favorite, seatCountdown, seating: !!pendingSeat, placementMessage, following: !!following, followCountdown, followReady: !!tracker?.ready, followMessage: followMessage() };
+    return { model: modelPath ? path.basename(modelPath) : '', error: loadError, shortcuts, moving: moveMode, pointerPlacing: !!pointerPlacement, placementEscape, loaded: modelLoaded, scale, posture, facing, quiet, textureQuality, hasFavorite: !!favorite, seatCountdown, seating: !!pendingSeat, placementMessage, following: !!following, followCountdown, followReady: !!tracker?.ready, followMessage: followMessage() };
   });
   dialogue = new DialogueWindowController({
     url: pathToFileURL(path.join(__dirname, 'dialogue.html')).href,
@@ -835,7 +862,7 @@ async function start() {
     setMoveMode, moveState: () => ({ active: moveMode, revision: moveRevision, shape: moveShape, dragging: !!moveStart }),
     togglePointerPlacement, finishPointerPlacement, tickPointerPlacement,
     pointerState: () => ({ active: !!pointerPlacement, escape: placementEscape, timer: !!pointerTimer, origin: pointerPlacement?.bounds }),
-    setScale, setPosture, setPresence, seatAtPoint, cancelSeat,
+    setScale, setPosture, setPresence, setTextureQuality, seatAtPoint, cancelSeat,
     startFollowing, scheduleFollowing, stopFollowing, onTrackedWindow,
     setForegroundFixture: (fixture: FixtureWindow) => tracker?.setForegroundFixture(fixture),
     // API checks exercise native metadata -> selection handoff independently
@@ -852,7 +879,7 @@ async function start() {
       if (paused) output?.pause(); else output?.resume();
     },
     tracking: () => ({ following, countdown: followCountdown, ready: !!tracker?.ready, pid: tracker?.pid, stats: tracker?.stats }),
-    status: () => ({ visible, modelLoaded, contextRecovering, loadError, shortcuts, scale, posture, facing, quiet, favorite, seatCountdown, pendingSeat, placementMessage }), metrics: () => app.getAppMetrics(),
+    status: () => ({ visible, modelLoaded, contextRecovering, loadError, shortcuts, scale, posture, facing, quiet, textureQuality, favorite, seatCountdown, pendingSeat, placementMessage }), metrics: () => app.getAppMetrics(),
   };
 }
 

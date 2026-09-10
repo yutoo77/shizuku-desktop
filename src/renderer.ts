@@ -69,18 +69,23 @@ async function reload(): Promise<void> {
   avatar?.clear();
   publishAvailability();
   try {
-    const buffer = await window.companion.getModel().catch(() => {
+    const [buffer, textureQuality] = await Promise.all([
+      window.companion.getModel(), window.companion.getTextureQuality(),
+    ]).catch(() => {
       // Electron's rejected-IPC wrapper is an implementation detail, not useful
       // recovery guidance in the tray or the small controls window.
       throw new Error('VRMを読めません。通知領域から選び直してください。');
     });
     if (disposed || current !== revision || !avatar) return;
+    if (textureQuality !== 'original' && textureQuality !== 'compact') {
+      throw new Error('画像の設定を確認できませんでした。アプリを再起動してください。');
+    }
     if (!buffer) {
       avatar.clear();
       reportError(new Error('トレイの「VRMを選ぶ…」からVRMを選んでください。'));
       return;
     }
-    await avatar.load(buffer);
+    await avatar.load(buffer, textureQuality);
   } catch (error) {
     if (!disposed && current === revision) reportError(error);
   } finally {

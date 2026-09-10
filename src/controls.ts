@@ -6,6 +6,7 @@ const buttons = document.querySelectorAll<HTMLButtonElement>('button[data-action
 const sizes = document.querySelectorAll<HTMLInputElement>('input[name="size"]');
 const postures = document.querySelectorAll<HTMLInputElement>('input[name="posture"]');
 const facings = document.querySelectorAll<HTMLInputElement>('input[name="facing"]');
+const textureQualities = document.querySelectorAll<HTMLInputElement>('input[name="texture-quality"]');
 const moveButton = document.querySelector<HTMLButtonElement>('#move-mode')!;
 const pointerButton = document.querySelector<HTMLButtonElement>('#pointer-place')!;
 const callButton = document.querySelector<HTMLButtonElement>('#call')!;
@@ -34,6 +35,10 @@ function renderStatus(): void {
   for (const radio of facings) {
     radio.disabled = busy || currentStatus === null;
     radio.checked = radio.value === currentStatus?.facing;
+  }
+  for (const radio of textureQualities) {
+    radio.disabled = busy || currentStatus === null;
+    radio.checked = radio.value === currentStatus?.textureQuality;
   }
   document.querySelector('#error')!.textContent = operationError || currentStatus?.error || '';
   if (!currentStatus) return;
@@ -82,8 +87,8 @@ async function perform(action: CompanionAction): Promise<void> {
   } catch {
     operationError = '操作に失敗しました。通知領域のアイコンから終了・再起動できます。';
   } finally {
-    // Read the confirmed value before enabling input again. A failed resize also
-    // restores the previous radio selection; an unloaded model keeps Move disabled.
+    // Read the confirmed value before enabling input again. Failed changes also
+    // restore the previous radio selection; an unloaded model keeps Move disabled.
     await status();
     busy = false;
     renderStatus();
@@ -93,7 +98,7 @@ async function perform(action: CompanionAction): Promise<void> {
 for (const button of buttons) {
   button.addEventListener('click', () => void perform(button.dataset.action as CompanionAction));
 }
-for (const radio of [...sizes, ...postures, ...facings]) {
+for (const radio of [...sizes, ...postures, ...facings, ...textureQualities]) {
   radio.addEventListener('change', () => {
     if (radio.checked) void perform(radio.dataset.action as CompanionAction);
   });

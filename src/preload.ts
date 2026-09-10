@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('companion', {
     return () => ipcRenderer.removeListener('avatar:posture', listener);
   },
   getModel: () => ipcRenderer.invoke('model:read'),
+  getTextureQuality: () => ipcRenderer.invoke('model:quality'),
   onCalled: (callback: (expiresAt: number) => void) => {
     const listener = (_event: unknown, expiresAt: number) => callback(expiresAt);
     ipcRenderer.on('avatar:called', listener);
