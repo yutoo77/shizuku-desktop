@@ -202,4 +202,4 @@ Electron 自体に利用料はありませんが、Chromium・Node.js を含む�
 
 この試作には AI API、マイク、他アプリやデスクトップの画面取得、自動起動、他アプリの自律操作はありません。研究コード、内部資料、参加者情報、私的な録音、市販 DLC の素材は持ち込みません。ソースコードとモデルの利用条件は別です。[第三者のライセンスとモデルの注意事項](THIRD_PARTY_NOTICES.md) を確認してください。
 
-アプリ名は仮称です。2026-09-10に [yutoo77/shizuku-desktop](https://github.com/yutoo77/shizuku-desktop) をPrivateで作成しました。Public化と配布時のライセンスは別途判断します。既存リポジトリのPublic許可は引き継ぎません。[Windowsの自動検査](docs/ci.md)は手動実行用の設定を用意しました。ローカルの新規セットアップで検査済みですが、GitHub上では未実行です。[公開前の確認事項](docs/release-readiness.md)に判断が残る点をまとめています。
+アプリ名は仮称です。ソースコードは[MIT License](LICENSE)です。モデルや音声は対象に含めません。[安全上の報告先と検証範囲](SECURITY.md)、[Windowsの自動検査](docs/ci.md)、[公開準備の記録](docs/release-readiness.md)を参照してください。過去の検証記録のコミット番号は、メール匿名化前のものを含みます。[対応表](docs/history.md)で現在の履歴を確認できます。

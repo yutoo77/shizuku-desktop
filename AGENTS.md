@@ -4,7 +4,7 @@
 - Address the user as ふぁるるくん. Use plain Japanese and explain technical terms briefly.
 - Implement related capabilities in a tested batch, as the user requested on 2026-09-10. Do not stop for approval at each small feature. Preserve transparent presence and reliable recovery before adding dialogue.
 - Check git status before editing. Do not commit models, secrets, recordings, runtime logs, build output, or research material.
-- Never infer this repository's visibility from another repository. origin is yutoo77/shizuku-desktop and is Private. Ask before making it public.
+- The user explicitly approved Public source release, MIT licensing and commit-email anonymization on 2026-09-10. origin is yutoo77/shizuku-desktop. Preserve the separate old history as Private; never publish its refs, bundle or local records. Do not change account-wide privacy settings or other repositories.
 - No automatic startup, constant microphone/screen capture, external AI requests, or autonomous PC actions.
 - Explicit window following may read the selected window's bounds, visibility and topmost flag, and compare its immediate predecessor with our own overlay handle. Only our overlay may change stacking order. Native code must not read titles, content, input, neighbouring window properties, or manipulate other windows. Test with dedicated fixture handles/PIDs; verify foreground selection separately using native input.
 - The explicit window picker may check the foreground handle and eligibility for at most 20 seconds; it must stop on selection, cancellation, timeout or exit. Never use input hooks or read window content. Native tests must restrict the picker to their dedicated fixture handle/PID.
