@@ -2,6 +2,7 @@
 
 - This is an independent personal Windows desktop application. Do not modify adaptive-vrm-dialogue-agent.
 - Address the user as ふぁるるくん. Use plain Japanese and explain technical terms briefly.
+- The user prioritized completing a good everyday product over job-hunting presentation on 2026-09-10. Judge progress by quiet presence, natural explicit conversation, easy setup/control, resource use and reliable daily operation. Do not expand features merely to make a portfolio look larger. See docs/product-quality.md for completion criteria.
 - Implement related capabilities in a tested batch, as the user requested on 2026-09-10. Do not stop for approval at each small feature. Preserve transparent presence and reliable recovery before adding dialogue.
 - Check git status before editing. Do not commit models, secrets, recordings, runtime logs, build output, or research material.
 - The user explicitly approved Public source release, MIT licensing and commit-email anonymization on 2026-09-10. origin is yutoo77/shizuku-desktop. Preserve the separate old history as Private; never publish its refs, bundle or local records. Do not change account-wide privacy settings or other repositories.

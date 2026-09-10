@@ -46,7 +46,8 @@ test('late decode closes immediately after cancellation and cannot close a diffe
   assert.equal(active.closes, 1);
 });
 
-test('the parser-local adapter tracks decoded images before forwarding unchanged callbacks', () => {
+test('successful decoding tracks the image and leaves URL cleanup to the parser', t => {
+  const revoke = t.mock.method(URL, 'revokeObjectURL', () => {});
   const images = new ModelImages();
   const decoded = bitmap();
   let finish;
@@ -58,18 +59,109 @@ test('the parser-local adapter tracks decoded images before forwarding unchanged
       assert.equal(this, loader);
       assert.equal(url, 'blob:model-image');
       assert.equal(onProgress, progress);
-      assert.equal(onError, failure);
+      assert.equal(typeof onError, 'function');
       finish = onLoad;
     },
   };
   trackModelImages({ textureLoader: loader }, images);
   let received;
   loader.load('blob:model-image', image => { received = image; }, progress, failure);
+  assert.equal(revoke.mock.callCount(), 0);
   finish(decoded);
   assert.equal(received, decoded);
   assert.equal(decoded.closes, 0);
+  assert.equal(revoke.mock.callCount(), 0);
   images.dispose();
   assert.equal(decoded.closes, 1);
+  assert.equal(revoke.mock.callCount(), 0);
+});
+
+test('failed blob decoding releases its URL once and forwards original errors', t => {
+  const revoked = [];
+  t.mock.method(URL, 'revokeObjectURL', url => revoked.push(url));
+  let fail;
+  const loader = {
+    isImageBitmapLoader: true,
+    load(_url, _onLoad, _onProgress, onError) { fail = onError; },
+  };
+  trackModelImages({ textureLoader: loader }, new ModelImages());
+  const failures = [];
+  const error = new Error('synthetic decode failure');
+  loader.load('blob:broken-image', undefined, undefined, received => {
+    assert.deepEqual(revoked, ['blob:broken-image']);
+    failures.push(received);
+  });
+  fail(error);
+  fail(error);
+  assert.deepEqual(revoked, ['blob:broken-image']);
+  assert.equal(failures.length, 2);
+  assert.ok(failures.every(received => received === error));
+});
+
+test('non-blob errors are forwarded without revoking other URL types', t => {
+  const revoke = t.mock.method(URL, 'revokeObjectURL', () => {});
+  const error = { reason: 'synthetic failure' };
+  const loader = {
+    isImageBitmapLoader: true,
+    load(_url, _onLoad, _onProgress, onError) { onError(error); },
+  };
+  trackModelImages({ textureLoader: loader }, new ModelImages());
+  let failures = 0;
+  // The adapter does not grant network access; this loader is an isolated fake.
+  for (const url of ['data:image/png;base64,invalid', 'https://example.invalid/image', 'image.png']) {
+    loader.load(url, undefined, undefined, received => {
+      assert.equal(received, error);
+      failures += 1;
+    });
+  }
+  assert.equal(failures, 3);
+  assert.equal(revoke.mock.callCount(), 0);
+});
+
+test('a missing error callback does not prevent failed blob cleanup', t => {
+  const revoked = [];
+  t.mock.method(URL, 'revokeObjectURL', url => revoked.push(url));
+  const loader = {
+    isImageBitmapLoader: true,
+    load(_url, _onLoad, _onProgress, onError) { onError(new Error('synthetic failure')); },
+  };
+  trackModelImages({ textureLoader: loader }, new ModelImages());
+  assert.doesNotThrow(() => loader.load('blob:no-error-handler'));
+  assert.deepEqual(revoked, ['blob:no-error-handler']);
+});
+
+test('synchronous loader failure releases the blob and throws the same error', t => {
+  const revoked = [];
+  t.mock.method(URL, 'revokeObjectURL', url => revoked.push(url));
+  const error = new Error('synthetic loader startup failure');
+  const loader = {
+    isImageBitmapLoader: true,
+    load() { throw error; },
+  };
+  trackModelImages({ textureLoader: loader }, new ModelImages());
+  let callbackCalls = 0;
+  assert.throws(() => loader.load('blob:startup-failure', undefined, undefined, () => {
+    callbackCalls += 1;
+  }), received => received === error);
+  assert.deepEqual(revoked, ['blob:startup-failure']);
+  assert.equal(callbackCalls, 0);
+});
+
+test('an error callback that throws does not cause duplicate URL release', t => {
+  const revoked = [];
+  t.mock.method(URL, 'revokeObjectURL', url => revoked.push(url));
+  const error = new Error('synthetic decode failure');
+  const callbackError = new Error('synthetic callback failure');
+  const loader = {
+    isImageBitmapLoader: true,
+    load(_url, _onLoad, _onProgress, onError) { onError(error); },
+  };
+  trackModelImages({ textureLoader: loader }, new ModelImages());
+  assert.throws(() => loader.load('blob:callback-failure', undefined, undefined, received => {
+    assert.equal(received, error);
+    throw callbackError;
+  }), received => received === callbackError);
+  assert.deepEqual(revoked, ['blob:callback-failure']);
 });
 
 test('a failed parse still releases later decodes while allowing parser cleanup to finish', () => {

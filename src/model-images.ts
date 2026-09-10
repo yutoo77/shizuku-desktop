@@ -52,13 +52,35 @@ export class ModelImages {
  * also covers unused textures and failures before a scene exists; scene traversal
  * cannot. No global ImageBitmap/loader behavior is changed. The normal parser
  * callback still runs for an obsolete load so its object-URL cleanup can finish.
+ * This adapter is used only after embedded-resource validation: input blob URLs
+ * are rejected, so a blob URL reaching this loader belongs to GLTFLoader. Three
+ * r185 revokes those URLs on success only; release them here on decode failure.
  */
 export function trackModelImages(parser: Pick<GLTFParser, 'textureLoader'>, images: ModelImages): void {
   const loader = parser.textureLoader;
   if (!('isImageBitmapLoader' in loader) || loader.isImageBitmapLoader !== true) return;
   const load = loader.load.bind(loader);
-  loader.load = (url, onLoad, onProgress, onError) => load(url, image => {
-    images.track(image);
-    onLoad?.(image);
-  }, onProgress, onError);
+  loader.load = (url, onLoad, onProgress, onError) => {
+    let completed = false;
+    let released = false;
+    const releaseFailedURL = () => {
+      if (completed || released || !url.startsWith('blob:')) return;
+      released = true;
+      URL.revokeObjectURL(url);
+    };
+    try {
+      return load(url, image => {
+        images.track(image);
+        onLoad?.(image);
+        completed = true;
+      }, onProgress, error => {
+        releaseFailedURL();
+        onError?.(error);
+      });
+    } catch (error) {
+      // URL resolution or starting the loader can also throw before a callback.
+      releaseFailedURL();
+      throw error;
+    }
+  };
 }
