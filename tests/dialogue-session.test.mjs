@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDialogueSession, DIALOGUE_LIMITS } from '../src/dialogue-session.mjs';
+import { DialogueReplyError } from '../src/dialogue-error.mjs';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function deferred() {
@@ -262,5 +263,51 @@ test('a failing view callback does not prevent cancellation', async () => {
     await flush();
     assert.equal(session.snapshot().status, 'idle');
     assert.equal(session.snapshot().messages.length, 1);
+  } finally { session.dispose(); }
+});
+
+test('external sessions require an adapter and identify their provider', () => {
+  assert.throws(() => createDialogueSession({ provider: 'openai' }), /adapter/);
+  assert.throws(() => createDialogueSession({ provider: 'untrusted' }), /provider/);
+  const session = createDialogueSession({ provider: 'openai', reply: async () => '返事' });
+  assert.equal(session.snapshot().provider, 'openai');
+  session.dispose();
+});
+
+test('canceled and failed entries are visible but never sent as context in a later request', async () => {
+  const pending = deferred();
+  const histories = [];
+  const session = createDialogueSession({
+    provider: 'openai',
+    async reply(text, { history }) {
+      histories.push(history.map(message => message.text));
+      if (text === '中止する文') return pending.promise;
+      if (text === '失敗する文') throw new Error('upstream private diagnostic');
+      return `返事:${text}`;
+    },
+  });
+  try {
+    session.send('完了した文'); await flush();
+    session.send('中止する文'); await flush(); session.cancel();
+    session.send('失敗する文'); await flush();
+    session.send('次の文'); await flush();
+    pending.resolve('中止した古い返事'); await flush();
+    assert.deepEqual(histories.at(-1), ['完了した文', '返事:完了した文']);
+    assert.match(JSON.stringify(session.snapshot().messages), /中止する文/);
+    assert.doesNotMatch(JSON.stringify(session.snapshot()), /中止した古い返事|private diagnostic/);
+    session.clear(); session.send('新しい会話'); await flush();
+    assert.deepEqual(histories.at(-1), []);
+  } finally { session.dispose(); }
+});
+
+test('provider failures use trusted error codes without displaying upstream diagnostic text', async () => {
+  const answers = [new DialogueReplyError('auth'), { code: 'auth', message: 'private key' }];
+  const session = createDialogueSession({ provider: 'openai', async reply() { throw answers.shift(); } });
+  try {
+    session.send('確認'); await flush();
+    assert.match(session.snapshot().error, /キー|認証/);
+    session.send('確認'); await flush();
+    assert.equal(session.snapshot().error, '返事を用意できなかったよ。もう一度送ってみてね。');
+    assert.doesNotMatch(JSON.stringify(session.snapshot()), /private key/);
   } finally { session.dispose(); }
 });

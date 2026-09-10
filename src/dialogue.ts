@@ -4,14 +4,16 @@ interface DialogueSnapshot {
   status: 'idle' | 'pending' | 'error';
   messages: Array<{ id: string; role: 'user' | 'assistant'; text: string }>;
   error: string | null;
-  provider: 'local-demo';
+  provider: 'local-demo' | 'openai';
   inputLimit: number;
+  connection: { available: boolean; model: string; historyTurns: number; contextCharacters: number; maxOutputTokens: number };
 }
 
 interface DialogueBridge {
   getState(): Promise<DialogueSnapshot>;
   onChanged(callback: (snapshot: DialogueSnapshot) => void): () => void;
   send(text: string): Promise<boolean>;
+  setProvider(provider: 'local-demo' | 'openai'): Promise<boolean>;
   cancel(): Promise<void>;
   clear(): Promise<void>;
   close(): Promise<void>;
@@ -30,6 +32,13 @@ const error = document.querySelector<HTMLElement>('#error')!;
 const pending = document.querySelector<HTMLElement>('#pending')!;
 const empty = document.querySelector<HTMLElement>('#empty')!;
 const options = document.querySelector<HTMLDetailsElement>('#options')!;
+const provider = document.querySelector<HTMLSelectElement>('#provider')!;
+const providerStatus = document.querySelector<HTMLElement>('#provider-status')!;
+const openaiOption = document.querySelector<HTMLOptionElement>('#openai-option')!;
+const connectionHelp = document.querySelector<HTMLElement>('#connection-help')!;
+const aiDetails = document.querySelector<HTMLElement>('#ai-details')!;
+const aiLimits = document.querySelector<HTMLElement>('#ai-limits')!;
+const transmission = document.querySelector<HTMLElement>('#transmission')!;
 
 let snapshot: DialogueSnapshot | null = null;
 let requestVersion = 0;
@@ -47,6 +56,22 @@ function render(): void {
   if (disposed) return;
   const waiting = submitting || snapshot?.status === 'pending';
   const limit = snapshot?.inputLimit ?? 1000;
+  const isAI = snapshot?.provider === 'openai';
+  providerStatus.textContent = isAI ? 'OpenAI・従量課金' : 'お試し・AI未接続';
+  send.textContent = isAI ? 'OpenAIへ送る' : '送る';
+  transmission.hidden = !isAI;
+  provider.disabled = !snapshot || changing || composing;
+  if (!changing) provider.value = snapshot?.provider ?? 'local-demo';
+  openaiOption.disabled = !snapshot?.connection?.available;
+  connectionHelp.textContent = snapshot?.connection?.available
+    ? 'OpenAIを選び、送信したときだけ通信します。'
+    : 'OpenAIのキーが未設定です。起動手順の「AI会話」を確認してね。';
+  aiDetails.hidden = !isAI;
+  if (snapshot?.connection) {
+    const config = snapshot.connection;
+    aiLimits.textContent = `${config.model}。送信する履歴は完了した直近${config.historyTurns}往復・${config.contextCharacters}文字以内、返答は最大${config.maxOutputTokens}トークン（文字を分けた単位）です。送信ごとに料金がかかります。`;
+  }
+  input.disabled = changing;
   input.maxLength = limit;
   send.disabled = !snapshot || waiting || changing || !input.value.trim() || input.value.length > limit;
   cancel.hidden = !waiting;
@@ -161,9 +186,32 @@ async function closeConversation(): Promise<void> {
   }
 }
 
+async function changeProvider(): Promise<void> {
+  const value = provider.value;
+  if (disposed || changing || composing || (value !== 'local-demo' && value !== 'openai')) return;
+  const version = ++operationVersion;
+  requestVersion++;
+  changing = true; submitting = false; operationError = '';
+  render();
+  try {
+    const accepted = await bridge.setProvider(value);
+    if (disposed || version !== operationVersion) return;
+    if (accepted) { input.value = ''; draftVersion++; }
+    else operationError = '切り替えられませんでした。接続設定を確認してね。';
+  } catch {
+    if (disposed || version !== operationVersion) return;
+    operationError = '切り替えられませんでした。一度閉じて、もう一度呼んでね。';
+  } finally {
+    if (!disposed && version === operationVersion) {
+      changing = false;
+      await refresh();
+    }
+  }
+}
+
 input.addEventListener('input', () => { draftVersion++; render(); });
-input.addEventListener('compositionstart', () => { composing = true; });
-input.addEventListener('compositionend', () => { composing = false; });
+input.addEventListener('compositionstart', () => { composing = true; render(); });
+input.addEventListener('compositionend', () => { composing = false; render(); });
 input.addEventListener('keydown', event => {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing || composing || event.keyCode === 229) return;
   event.preventDefault();
@@ -176,6 +224,7 @@ form.addEventListener('submit', event => {
 cancel.addEventListener('click', () => { void changeConversation('cancel'); });
 clear.addEventListener('click', () => { void changeConversation('clear'); });
 close.addEventListener('click', () => { void closeConversation(); });
+provider.addEventListener('change', () => { void changeProvider(); });
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape' || event.isComposing || composing || event.keyCode === 229) return;
   event.preventDefault();

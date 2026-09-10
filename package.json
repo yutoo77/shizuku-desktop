@@ -22,6 +22,7 @@
     "test:picker": "node scripts/window-picker.mjs",
     "test:rest": "node scripts/system-rest.mjs",
     "test:dialogue": "node scripts/dialogue.mjs",
+    "test:ai-dialogue": "node scripts/ai-dialogue.mjs",
     "test:native": "node scripts/native-lifecycle.mjs",
     "test:pointer": "node scripts/pointer-placement.mjs",
     "test:resident": "node scripts/resident-check.mjs"

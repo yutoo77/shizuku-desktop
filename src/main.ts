@@ -10,7 +10,13 @@ import { normalizePosture } from './posture.mjs';
 import { normalizeFacing, normalizeFavorite, seatBounds, validateAnchor } from './placement.mjs';
 import { followPlacement } from './follow-policy.mjs';
 import { WindowTracker, type TrackedWindow, type TrackingEvent, type FixtureWindow } from './window-tracker';
-import { DialogueWindowController } from './dialogue-window';
+import { DialogueWindowController, type DialogueConnection } from './dialogue-window';
+import { createOpenAIConnection } from './openai-reply.mjs';
+
+// A user-owned key is captured only by the main-process adapter. Do not pass it
+// to renderer/native children or persist it. Test launches cannot use this key.
+const dialogueAI = createOpenAIConnection({ apiKey: process.env.SHIZUKU_TEST === '1' ? undefined : process.env.OPENAI_API_KEY });
+delete process.env.OPENAI_API_KEY;
 
 const root = path.resolve(__dirname, '..');
 const work = path.join(root, 'work');
@@ -24,6 +30,7 @@ let avatar: BrowserWindow | null = null;
 let controls: BrowserWindow | null = null;
 let dialogue: DialogueWindowController | null = null;
 let dialogueTestReply: ((text: string, context: { signal: AbortSignal; history: unknown[] }) => Promise<string>) | undefined;
+let dialogueTestAI: DialogueConnection | undefined;
 let tray: Tray | null = null;
 let trayMenu: Menu | null = null;
 let modelPath = '';
@@ -757,6 +764,12 @@ async function start() {
     anchor: () => avatar ? avatarBounds(avatar) : defaultBounds(area(), scale),
     canOpen: () => !quitting && !systemResting(), secure: secureWindow,
     getReply: () => process.env.SHIZUKU_TEST === '1' ? dialogueTestReply : undefined,
+    getAI: () => process.env.SHIZUKU_TEST === '1' ? dialogueTestAI : dialogueAI,
+    onReply: () => {
+      if (visible && modelLoaded && !systemResting() && avatar && !avatar.isDestroyed()) {
+        avatar.webContents.send('avatar:called', Date.now() + 2600);
+      }
+    },
   });
   tray = new Tray(icon());
   tray.on('double-click', () => setVisible(!visible));
@@ -804,6 +817,7 @@ async function start() {
     dialogue: () => dialogue?.window(), dialogueState: () => dialogue?.snapshot(),
     openDialogue: () => dialogue?.open(), closeDialogue: () => dialogue?.close(),
     setDialogueReply: (reply: typeof dialogueTestReply) => { dialogueTestReply = reply; },
+    setDialogueAI: (connection: DialogueConnection | undefined) => { dialogueTestAI = connection; },
     tray: () => tray, trayMenu: () => trayMenu,
     setMoveMode, moveState: () => ({ active: moveMode, revision: moveRevision, shape: moveShape, dragging: !!moveStart }),
     togglePointerPlacement, finishPointerPlacement, tickPointerPlacement,

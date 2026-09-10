@@ -14,7 +14,7 @@ body {
   padding: 10px 12px 12px;
   overflow: hidden;
 }
-button, textarea, summary { font: inherit; }
+button, textarea, select, summary { font: inherit; }
 button, summary { -webkit-user-select: none; user-select: none; }
 button {
   min-height: 32px;
@@ -27,7 +27,7 @@ button {
 }
 button:hover:not(:disabled), summary:hover { background: #eaf3fa; }
 button:disabled { cursor: default; opacity: .5; }
-button:focus-visible, summary:focus-visible, textarea:focus-visible {
+button:focus-visible, summary:focus-visible, textarea:focus-visible, select:focus-visible {
   outline: 2px solid #457ca4;
   outline-offset: 2px;
 }
@@ -56,6 +56,8 @@ summary::-webkit-details-marker { display: none; }
   font-size: 12px;
   line-height: 1.65;
 }
+select { width: 100%; min-height: 34px; margin-top: 5px; border: 1px solid #bdcfde; border-radius: 7px; background: #fff; color: inherit; padding: 4px; }
+#transmission { margin: 0; font-size: 11px; color: #587488; line-height: 1.4; }
 .options-panel p { margin: 0 0 10px; }
 .options-panel button { width: 100%; font-size: 12px; }
 .conversation { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 4px 3px; }

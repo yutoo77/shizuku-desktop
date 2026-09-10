@@ -1,4 +1,6 @@
-/** The first dialogue surface is a local demonstration, with no network or storage. */
+import { dialogueErrorMessage } from './dialogue-error.mjs';
+
+/** Sessions own cancellation and RAM-only history; providers own transport. */
 export const DIALOGUE_LIMITS = Object.freeze({
   inputCharacters: 1000,
   replyCharacters: 4000,
@@ -7,7 +9,7 @@ export const DIALOGUE_LIMITS = Object.freeze({
 });
 
 /** @typedef {{id: string, role: 'user' | 'assistant', text: string}} DialogueMessage */
-/** @typedef {{status: 'idle' | 'pending' | 'error', messages: DialogueMessage[], error: string | null, provider: 'local-demo', inputLimit: number}} DialogueSnapshot */
+/** @typedef {{status: 'idle' | 'pending' | 'error', messages: DialogueMessage[], error: string | null, provider: 'local-demo' | 'openai', inputLimit: number}} DialogueSnapshot */
 /** @typedef {(text: string, context: {signal: AbortSignal, history: DialogueMessage[]}) => Promise<string>} Reply */
 
 /** @type {Reply} */
@@ -34,10 +36,13 @@ async function localReply(text) {
  * Replies receive the earlier messages, excluding the new text passed separately.
  * replyTimeoutMs is injectable for deterministic tests; production uses the default.
  * Input length uses UTF-16 code units, matching a textarea's maxlength.
- * @param {{reply?: Reply, onChange?: (state: DialogueSnapshot) => void, replyTimeoutMs?: number}} [options]
+ * @param {{reply?: Reply, provider?: 'local-demo' | 'openai', onChange?: (state: DialogueSnapshot) => void, replyTimeoutMs?: number}} [options]
  */
 export function createDialogueSession(options = {}) {
   const reply = options.reply ?? localReply;
+  const provider = options.provider ?? 'local-demo';
+  if (provider !== 'local-demo' && provider !== 'openai') throw new TypeError('Invalid provider');
+  if (provider === 'openai' && !options.reply) throw new TypeError('External provider requires a reply adapter');
   const timeoutMs = options.replyTimeoutMs ?? DIALOGUE_LIMITS.replyTimeoutMs;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new TypeError('replyTimeoutMs must be a positive finite number');
@@ -57,7 +62,7 @@ export function createDialogueSession(options = {}) {
   function snapshot() {
     return {
       status, messages: messages.map(message => ({ ...message })), error,
-      provider: 'local-demo', inputLimit: DIALOGUE_LIMITS.inputCharacters,
+      provider, inputLimit: DIALOGUE_LIMITS.inputCharacters,
     };
   }
 
@@ -86,7 +91,14 @@ export function createDialogueSession(options = {}) {
     if (disposed || active || typeof text !== 'string' ||
         text.length > DIALOGUE_LIMITS.inputCharacters || text.trim().length === 0) return false;
     const input = text.trim();
-    const history = messages.map(message => ({ ...message }));
+    // Aborted and failed user entries remain visible, but must never be replayed
+    // into a later request. Only adjacent completed turns form provider context.
+    const history = [];
+    for (let index = 0; index + 1 < messages.length; index++) {
+      if (messages[index].role === 'user' && messages[index + 1].role === 'assistant') {
+        history.push({ ...messages[index] }, { ...messages[++index] });
+      }
+    }
     const operation = { controller: new AbortController(), timer: /** @type {ReturnType<typeof setTimeout> | null} */ (null) };
     active = operation;
     status = 'pending';
@@ -115,11 +127,11 @@ export function createDialogueSession(options = {}) {
         pruneHistory();
         status = 'idle';
         emit();
-      } catch {
+      } catch (failure) {
         if (disposed || active !== operation) return;
         stopActive();
         status = 'error';
-        error = '返事を用意できなかったよ。もう一度送ってみてね。';
+        error = dialogueErrorMessage(failure);
         emit();
       }
     });

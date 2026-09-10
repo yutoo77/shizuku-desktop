@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('dialogue', {
   getState: () => ipcRenderer.invoke('dialogue:state'),
   send: (text: string) => ipcRenderer.invoke('dialogue:send', text),
+  setProvider: (provider: 'local-demo' | 'openai') => ipcRenderer.invoke('dialogue:provider', provider),
   cancel: () => ipcRenderer.invoke('dialogue:cancel'),
   clear: () => ipcRenderer.invoke('dialogue:clear'),
   close: () => ipcRenderer.invoke('dialogue:close'),

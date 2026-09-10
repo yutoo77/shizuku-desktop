@@ -9,13 +9,22 @@
 </head>
 <body>
   <header>
-    <div class="identity"><h1>月白しずく</h1><span class="demo">お試し・AI未接続</span></div>
+    <div class="identity"><h1>月白しずく</h1><span id="provider-status" class="demo">お試し・AI未接続</span></div>
     <details id="options">
       <summary aria-label="会話の設定">···</summary>
       <div class="options-panel">
-        <p>定型文の返事です。AIへの送信はありません。</p>
-        <p>会話は保存しません。この窓を閉じると消えます。</p>
-        <p>入力は1回1000文字まで。発言は直近40件を表示します。</p>
+        <label for="provider">返答</label>
+        <select id="provider" disabled>
+          <option value="local-demo">お試し（定型文）</option>
+          <option value="openai" id="openai-option" disabled>OpenAI（従量課金）</option>
+        </select>
+        <p>切り替えると会話と入力を消します。</p>
+        <p id="connection-help">接続設定を確認しています。</p>
+        <div id="ai-details" hidden>
+          <p id="ai-limits"></p>
+          <p>アプリには保存しません。OpenAI側には不正利用の監視などの保存条件があります。中止しても、送信済みの処理や課金が止まるとは限りません。</p>
+        </div>
+        <p>この窓を閉じると、アプリ内の会話は消えます。入力は1回1000文字、表示は直近40件までです。</p>
         <button id="clear" type="button">会話を消す</button>
       </div>
     </details>
@@ -29,6 +38,7 @@
     <p id="error" role="alert"></p>
     <label class="sr-only" for="message">話しかける</label>
     <textarea id="message" aria-label="話しかける" placeholder="話しかける…" rows="2" maxlength="1000" enterkeyhint="send" spellcheck="false"></textarea>
+    <p id="transmission" hidden>入力と直近の会話をOpenAIへ送ります。</p>
     <div class="composer-actions">
       <span id="pending" role="status" aria-live="polite"></span>
       <button id="cancel" type="button" hidden>中止</button>
