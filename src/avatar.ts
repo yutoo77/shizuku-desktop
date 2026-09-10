@@ -347,17 +347,8 @@ export class Avatar {
 
   /** Snapshot only our canvas, once, while its displayed pose stays frozen. */
   public enterMoveMode(): Array<{ x: number; y: number; width: number; height: number }> {
-    if (!this.hasContext() || !this.visible || !this.vrm) {
-      throw new Error('しずくが表示されてから、もう一度試してください。');
-    }
-    this.pause();
-    // Cancel pending work without updating the frozen bones/morph targets. The
-    // snapshot below keeps matching the exact displayed pose throughout dragging.
-    this.cancelReaction();
-    this.moving = true;
-    this.diagnostics.moving = true;
-    // Do not call draw(0): even a zero delta would update bones, expressions and
-    // spring bones. The shaped window must match exactly this frozen frame.
+    this.pauseForPlacement();
+    // Do not call draw(0): the shaped window must match the frozen pose.
     if (!this.renderCurrentFrame()) throw new Error('描画を確認できませんでした。');
     const gl = this.renderer.getContext();
     if (gl.isContextLost()) throw new Error('描画を確認できませんでした。');
@@ -367,12 +358,24 @@ export class Avatar {
       throw new Error('表示倍率の変更が終わってから、もう一度試してください。');
     }
     const pixels = new Uint8Array(width * height * 4);
-    // Immediate readback is intentional: preserveDrawingBuffer remains disabled.
-    // This is our WebGL drawing buffer, never a desktop/screen capture.
+    // This is our WebGL buffer, never a desktop/screen capture.
     gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
     const shape = rgbaToShape(pixels, width, height);
     if (shape.length === 0) throw new Error('しずくの輪郭を確認できませんでした。');
     return shape;
+  }
+
+  /** Native pointer placement needs no canvas readback or interactive window. */
+  public pauseForPlacement(): void {
+    if (!this.hasContext() || !this.visible || !this.vrm) {
+      throw new Error('しずくが表示されてから、もう一度試してください。');
+    }
+    this.pause();
+    // Cancel pending work without updating the frozen bones/morph targets. The
+    // snapshot below keeps matching the exact displayed pose throughout dragging.
+    this.cancelReaction();
+    this.moving = true;
+    this.diagnostics.moving = true;
   }
 
   public exitMoveMode(): void {

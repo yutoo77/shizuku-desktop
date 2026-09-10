@@ -115,7 +115,9 @@ internal static class WindowTracker {
                 if (parent.HasExited) { Application.ExitThread(); return; }
                 using (var self = Process.GetCurrentProcess()) {
                     Emit("{\"type\":\"alive\",\"cpuMs\":" + self.TotalProcessorTime.TotalMilliseconds.ToString("F3", CultureInfo.InvariantCulture)
-                        + ",\"workingSetBytes\":" + self.WorkingSet64 + "}");
+                        + ",\"workingSetBytes\":" + self.WorkingSet64
+                        + ",\"privateBytes\":" + self.PrivateMemorySize64
+                        + ",\"monotonicMs\":" + (Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency).ToString("F3", CultureInfo.InvariantCulture) + "}");
                 }
             };
             lifetime.Start();

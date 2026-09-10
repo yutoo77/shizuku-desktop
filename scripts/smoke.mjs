@@ -308,7 +308,7 @@ try {
   await delay(500);
   assert.equal(await inspect(()=>globalThis.__shizuku.moveState().active),false);
   assert.equal(await inspect(()=>globalThis.__shizuku.status().modelLoaded),false);
-  assert.equal(await inspect(()=>globalThis.__shizuku.trayMenu().items.find(i=>i.label==='しずくをつかんで移動').enabled),false);
+  assert.equal(await inspect(()=>globalThis.__shizuku.trayMenu().items.find(i=>i.label==='ポインターで移動').enabled),false);
   results.push('Renderer failure releases move mode and disables movement while tray exit remains available');
   const pids=(await inspect(()=>globalThis.__shizuku.metrics())).map(p=>p.pid);
   const closed=application.waitForEvent('close');

@@ -4,6 +4,8 @@ body { margin: 0; }
 body.avatar, .avatar canvas { width: 100vw; height: 100vh; display: block; overflow: hidden; background: transparent; pointer-events: none; }
 body.avatar.move-mode, .avatar.move-mode canvas { pointer-events: auto; cursor: grab; touch-action: none; user-select: none; -webkit-app-region: no-drag; }
 body.avatar.move-dragging, .avatar.move-dragging canvas { cursor: grabbing; }
+.placement-cue { display: none; position: fixed; top: 0; left: 50%; transform: translateX(-50%); padding: 2px 8px; border-radius: 8px; background: #f8fbfff0; color: #243f6a; font-size: 11px; white-space: nowrap; pointer-events: none; }
+.pointer-placement .placement-cue { display: block; }
 body.controls { background: #f8fbff; padding: 12px 20px; }
 p { margin: 0 0 12px; }
 .hint { color: #415573; }

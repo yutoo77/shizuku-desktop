@@ -15,7 +15,7 @@ export class WindowTracker {
   private fixtureTests = false;
   private exitPromise: Promise<void> = Promise.resolve();
   ready = false;
-  stats: { cpuMs: number; workingSetBytes: number } | null = null;
+  stats: { cpuMs: number; workingSetBytes: number; privateBytes: number; monotonicMs: number; receivedAtMs: number } | null = null;
   constructor(private readonly onEvent: (event: TrackingEvent) => void, private readonly onAvailability: (available: boolean) => void) {}
   get pid(): number | undefined { return this.child?.pid; }
   start(executable: string, fixtureTests = false): void {
@@ -35,8 +35,9 @@ export class WindowTracker {
         try {
           const value = JSON.parse(line);
           if (value.type === 'ready' && !this.ready && !this.closing) { this.ready = true; this.lastAlive = Date.now(); this.onAvailability(true); }
-          else if (value.type === 'alive' && this.ready && Number.isFinite(value.cpuMs) && value.cpuMs >= 0 && Number.isSafeInteger(value.workingSetBytes) && value.workingSetBytes >= 0) {
-            this.lastAlive = Date.now(); this.stats = { cpuMs: value.cpuMs, workingSetBytes: value.workingSetBytes };
+          else if (value.type === 'alive' && this.ready && Number.isFinite(value.cpuMs) && value.cpuMs >= 0 && Number.isSafeInteger(value.workingSetBytes) && value.workingSetBytes >= 0
+            && Number.isSafeInteger(value.privateBytes) && value.privateBytes >= 0 && Number.isFinite(value.monotonicMs) && value.monotonicMs >= 0) {
+            this.lastAlive = Date.now(); this.stats = { cpuMs: value.cpuMs, workingSetBytes: value.workingSetBytes, privateBytes: value.privateBytes, monotonicMs: value.monotonicMs, receivedAtMs: performance.now() };
           } else if (this.ready && !this.closing) this.onEvent(parseWindowEvent(value) as TrackingEvent);
         } catch { this.fail(); return; }
       }

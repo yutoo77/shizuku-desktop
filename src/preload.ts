@@ -34,6 +34,11 @@ contextBridge.exposeInMainWorld('companion', {
     return () => ipcRenderer.removeListener('avatar:move-mode', listener);
   },
   submitMoveShape: (revision: number, rects: Array<{x: number; y: number; width: number; height: number}>) => ipcRenderer.invoke('avatar:move-shape', revision, rects),
+  onPointerPlacement: (callback: (active: boolean) => void) => {
+    const listener = (_event: unknown, active: boolean) => callback(active);
+    ipcRenderer.on('avatar:pointer-placement', listener);
+    return () => ipcRenderer.removeListener('avatar:pointer-placement', listener);
+  },
   movePointer: (revision: number, kind: 'start'|'move'|'end'|'cancel', point?: {x: number; y: number}) => ipcRenderer.send('avatar:move-pointer', revision, kind, point),
   ready: (state: {ok: boolean; error?: string; recovering?: boolean}) => ipcRenderer.send('avatar:ready', state),
   onVisibility: (callback: (visible: boolean) => void) => {

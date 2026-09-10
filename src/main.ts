@@ -58,6 +58,9 @@ let moveRevision = 0;
 let moveShape: Rectangle[] = [];
 let moveTimeout: NodeJS.Timeout | undefined;
 let moveStart: { bounds: Rectangle; cursor: { x: number; y: number } } | null = null;
+let pointerPlacement: { bounds: Rectangle; cursor: { x: number; y: number }; deadline: number } | null = null;
+let pointerTimer: NodeJS.Timeout | undefined;
+let placementEscape = false;
 const metricSamples: unknown[] = [];
 const area = () => screen.getPrimaryDisplay().workArea;
 
@@ -91,7 +94,7 @@ function placeAvatar(bounds: Rectangle) {
   verify(2);
 }
 function save() {
-  if (avatar && !avatar.isDestroyed()) savedBounds = avatarBounds(avatar);
+  if (avatar && !avatar.isDestroyed()) savedBounds = pointerPlacement ? { ...pointerPlacement.bounds } : avatarBounds(avatar);
   const value = JSON.stringify({ modelPath, bounds: savedBounds, scale, posture, facing, quiet, favorite }, null, 2);
   writeQueue = writeQueue.then(() => writeFile(configPath, value, 'utf8')).catch(error => console.error('Configuration could not be saved:', error.code));
   return writeQueue;
@@ -329,7 +332,43 @@ function renewMoveTimeout() {
   // A lost release or abandoned move mode must never leave an input-catching window.
   moveTimeout = setTimeout(() => setMoveMode(false), 30_000);
 }
+function finishPointerPlacement(commit: boolean, message = '') {
+  if (!pointerPlacement) return;
+  const origin = pointerPlacement.bounds;
+  pointerPlacement = null;
+  clearInterval(pointerTimer); pointerTimer = undefined;
+  if (placementEscape) globalShortcut.unregister('Escape');
+  placementEscape = false;
+  if (!commit) placeAvatar(origin);
+  avatar?.webContents.send('avatar:pointer-placement', false);
+  placementMessage = message;
+  saveSoon(); updateMenu();
+}
+function tickPointerPlacement(point = screen.getCursorScreenPoint(), now = performance.now()) {
+  const move = pointerPlacement;
+  if (!move || quitting) return;
+  if (now >= move.deadline) { finishPointerPlacement(false, '移動を取り消し、元の位置へ戻しました。'); return; }
+  // Keep the preview steady while using our own confirm/cancel buttons.
+  if (controls && !controls.isDestroyed() && controls.isVisible() && containsPoint([controls.getBounds()], point)) return;
+  try { placeAvatar(dragBounds(move.bounds, move.cursor, point, area())); }
+  catch { finishPointerPlacement(false); }
+}
+function togglePointerPlacement() {
+  if (pointerPlacement) { tickPointerPlacement(); finishPointerPlacement(true, 'この位置に置きました。'); return; }
+  if (quitting || !modelLoaded || contextRecovering || !avatar || avatar.isDestroyed()) return;
+  stopFollowing(false); cancelSeat(); setMoveMode(false);
+  if (!visible) applyVisibility(true);
+  pointerPlacement = { bounds: avatarBounds(avatar), cursor: screen.getCursorScreenPoint(), deadline: performance.now() + 30_000 };
+  placementEscape = globalShortcut.register('Escape', () => finishPointerPlacement(false, '元の位置へ戻しました。'));
+  placementMessage = '';
+  // The entire avatar stays click-through; no pointer capture or foreign focus changes.
+  avatar.setIgnoreMouseEvents(true);
+  avatar.webContents.send('avatar:pointer-placement', true);
+  pointerTimer = setInterval(tickPointerPlacement, 33);
+  updateMenu();
+}
 function setMoveMode(next: boolean) {
+  finishPointerPlacement(false);
   if (quitting || !avatar || avatar.isDestroyed()) return;
   if (next) { stopFollowing(false); cancelSeat(); }
   if (next && contextRecovering) return;
@@ -396,7 +435,7 @@ function updateMenu() {
     ...(loadError ? [{ label: loadError.slice(0, 65), enabled: false }] : []),
     { label: '呼ぶ', enabled: modelLoaded, click: callAvatar },
     { label: visible ? '隠す' : '表示する', click: () => setVisible(!visible) },
-    { label: moveMode ? '移動をやめる' : 'しずくをつかんで移動', enabled: modelLoaded, click: () => setMoveMode(!moveMode) },
+    { label: pointerPlacement ? 'この位置に置く' : 'ポインターで移動', enabled: modelLoaded, click: togglePointerPlacement },
     { label: '位置を動かす…', click: openControls },
     { label: seatCountdown || pendingSeat ? '座る場所の指定をやめる' : '3秒後のポインター位置に座る', enabled: modelLoaded, click: scheduleSeat },
     { label: following || followCountdown ? '窓の追従をやめる' : '3秒後に選んだ窓に座る', enabled: modelLoaded && !!tracker?.ready, click: () => scheduleFollowing() },
@@ -424,7 +463,7 @@ function updateMenu() {
     { label: '終了', click: () => app.quit() },
   ]);
   tray?.setContextMenu(trayMenu);
-  tray?.setToolTip(`月白しずく — ${loadError || followMessage() || (moveMode ? 'つかんで移動できます' : visible ? '表示中' : '非表示')}`);
+  tray?.setToolTip(`月白しずく — ${loadError || followMessage() || (pointerPlacement ? 'Mで位置を決定・30秒で取消' : moveMode ? 'つかんで移動できます' : visible ? '表示中' : '非表示')}`);
 }
 function openControls() {
   if (quitting) return;
@@ -500,6 +539,8 @@ async function action(value: string) {
   else if (value === 'call') callAvatar();
   else if (value === 'choose-model') await chooseModel();
   else if (value === 'move-mode') setMoveMode(!moveMode);
+  else if (value === 'pointer-place') togglePointerPlacement();
+  else if (value === 'cancel-placement') finishPointerPlacement(false, '元の位置へ戻しました。');
   else if (value === 'size-small') setScale(80);
   else if (value === 'size-standard') setScale(100);
   else if (value === 'size-large') setScale(120);
@@ -613,7 +654,7 @@ async function start() {
   });
   ipcMain.handle('controls:status', event => {
     if (!trusted(event, controls, controlsUrl)) throw new Error('Denied sender');
-    return { model: modelPath ? path.basename(modelPath) : '', error: loadError, shortcuts, moving: moveMode, loaded: modelLoaded, scale, posture, facing, quiet, hasFavorite: !!favorite, seatCountdown, seating: !!pendingSeat, placementMessage, following: !!following, followCountdown, followReady: !!tracker?.ready, followMessage: followMessage() };
+    return { model: modelPath ? path.basename(modelPath) : '', error: loadError, shortcuts, moving: moveMode, pointerPlacing: !!pointerPlacement, placementEscape, loaded: modelLoaded, scale, posture, facing, quiet, hasFavorite: !!favorite, seatCountdown, seating: !!pendingSeat, placementMessage, following: !!following, followCountdown, followReady: !!tracker?.ready, followMessage: followMessage() };
   });
   tray = new Tray(icon());
   tray.on('double-click', () => setVisible(!visible));
@@ -627,7 +668,7 @@ async function start() {
     ['CommandOrControl+Alt+Shift+B', restoreFavorite],
     ['CommandOrControl+Alt+Shift+F', () => setPresence(facing === 'left' ? 'right' : 'left', quiet)],
     ['CommandOrControl+Alt+Shift+Z', () => setPresence(facing, !quiet)],
-    ['CommandOrControl+Alt+Shift+M', () => setMoveMode(!moveMode)],
+    ['CommandOrControl+Alt+Shift+M', togglePointerPlacement],
     ['CommandOrControl+Alt+Shift+Q', () => app.quit()],
   ];
   shortcuts = bindings.map(([key, handler]) => globalShortcut.register(key, handler)).every(Boolean);
@@ -654,6 +695,8 @@ async function start() {
     avatar: () => avatar, controls: () => controls, setVisible, reset, openControls, action,
     tray: () => tray, trayMenu: () => trayMenu,
     setMoveMode, moveState: () => ({ active: moveMode, revision: moveRevision, shape: moveShape, dragging: !!moveStart }),
+    togglePointerPlacement, finishPointerPlacement, tickPointerPlacement,
+    pointerState: () => ({ active: !!pointerPlacement, escape: placementEscape, timer: !!pointerTimer, origin: pointerPlacement?.bounds }),
     setScale, setPosture, setPresence, seatAtPoint, cancelSeat,
     startFollowing, scheduleFollowing, stopFollowing, onTrackedWindow,
     tracking: () => ({ following, countdown: followCountdown, ready: !!tracker?.ready, pid: tracker?.pid, stats: tracker?.stats }),

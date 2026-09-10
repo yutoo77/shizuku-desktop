@@ -7,6 +7,7 @@ const sizes = document.querySelectorAll<HTMLInputElement>('input[name="size"]');
 const postures = document.querySelectorAll<HTMLInputElement>('input[name="posture"]');
 const facings = document.querySelectorAll<HTMLInputElement>('input[name="facing"]');
 const moveButton = document.querySelector<HTMLButtonElement>('#move-mode')!;
+const pointerButton = document.querySelector<HTMLButtonElement>('#pointer-place')!;
 const callButton = document.querySelector<HTMLButtonElement>('#call')!;
 const seatButton = document.querySelector<HTMLButtonElement>('#seat')!;
 const quietButton = document.querySelector<HTMLButtonElement>('#quiet')!;
@@ -18,7 +19,7 @@ let operationError = '';
 
 function renderStatus(): void {
   for (const button of buttons) {
-    button.disabled = busy || ((button === moveButton || button === callButton || button === seatButton) && !currentStatus?.loaded)
+    button.disabled = busy || ((button === moveButton || button === pointerButton || button === callButton || button === seatButton) && !currentStatus?.loaded)
       || (button.dataset.action === 'restore-favorite' && !currentStatus?.hasFavorite);
     if (button === followButton) button.disabled = busy || !currentStatus?.loaded || !currentStatus.followReady;
   }
@@ -38,14 +39,20 @@ function renderStatus(): void {
   if (!currentStatus) return;
   document.querySelector('#model')!.textContent = currentStatus.model || 'モデル未選択';
   document.querySelector('#shortcuts')!.textContent = currentStatus.shortcuts ? '' : 'ショートカットを登録できませんでした。通知領域のアイコンから操作できます。';
-  moveButton.textContent = currentStatus.moving ? '移動をやめる' : 'しずくをつかんで移動';
+  moveButton.textContent = currentStatus.moving ? 'ドラッグをやめる' : '直接ドラッグ（試験中）';
   moveButton.setAttribute('aria-pressed', String(currentStatus.moving));
+  pointerButton.textContent = currentStatus.pointerPlacing ? 'この位置に置く' : 'ポインターで移動';
+  pointerButton.setAttribute('aria-pressed', String(currentStatus.pointerPlacing));
+  callButton.textContent = currentStatus.pointerPlacing ? '移動を取り消す' : '呼ぶ';
+  callButton.dataset.action = currentStatus.pointerPlacing ? 'cancel-placement' : 'call';
   seatButton.textContent = currentStatus.seatCountdown || currentStatus.seating ? '場所の指定をやめる' : '3秒後のポインター位置に座る';
   quietButton.setAttribute('aria-pressed', String(currentStatus.quiet));
   quietButton.textContent = currentStatus.quiet ? '動きを戻す' : '動きを休める';
   followButton.textContent = currentStatus.following || currentStatus.followCountdown ? '窓の追従をやめる' : '3秒後に選んだ窓に座る';
   followButton.setAttribute('aria-pressed', String(currentStatus.following || !!currentStatus.followCountdown));
-  document.querySelector('#move-hint')!.textContent = currentStatus.followMessage || (currentStatus.seatCountdown
+  document.querySelector('#move-hint')!.textContent = currentStatus.pointerPlacing
+    ? `Ctrl + Alt + Shift + Mで決定。${currentStatus.placementEscape ? 'Esc・' : ''}30秒経過で取消。`
+    : currentStatus.followMessage || (currentStatus.seatCountdown
     ? `あと${currentStatus.seatCountdown}秒。座らせたい場所へポインターを動かしてね。`
     : currentStatus.seating ? '座る位置を合わせています。'
     : currentStatus.moving ? 'しずくをドラッグしてね。操作がなければ30秒で戻ります。'

@@ -66,7 +66,7 @@ async function lose() {
     const s = globalThis.__shizuku;
     return { shape: s.moveState().shape, focusable: s.avatar().isFocusable(),
       callEnabled: s.trayMenu().items.find(item => item.label === '呼ぶ').enabled,
-      moveEnabled: s.trayMenu().items.find(item => item.label === 'しずくをつかんで移動').enabled };
+      moveEnabled: s.trayMenu().items.find(item => item.label === 'ポインターで移動').enabled };
   });
   assert.deepEqual(native, { shape: [], focusable: false, callEnabled: false, moveEnabled: false });
   await stoppedFrames();

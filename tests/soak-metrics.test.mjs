@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { summarizeSoakPhase } from '../src/soak-metrics.mjs';
+import { summarizeSoakPhase, summarizeCompanionPhase } from '../src/soak-metrics.mjs';
 
 const options = { logicalProcessors: 4, visible: true };
 function row(ms, cpu, frames, extra = {}) {
@@ -15,6 +15,33 @@ function row(ms, cpu, frames, extra = {}) {
   };
 }
 const rows = () => [row(0, 1, 0), row(2000, 3, 50), row(8000, 6, 200)];
+
+function companionRows() {
+  return rows().map((sample, i) => ({ ...sample, windowTracker: { pid: 30, ready: true,
+    stats: { cpuMs: i * 100, workingSetBytes: 1048576, privateBytes: 2097152, monotonicMs: sample.monotonicMs + 900, receivedAtMs: sample.monotonicMs } } }));
+}
+test('quiet idle stops frames without pretending that the process uses zero resources', () => {
+  const samples = rows().map(s => ({ ...s, diagnostics: { ...s.diagnostics, quiet: true, renderedFrames: 5 } }));
+  assert.equal(summarizeSoakPhase(samples, options).observedFps, 0);
+  assert.equal(summarizeSoakPhase(samples, options).cpuPercentOfPC.mean, 15.625);
+  samples[1].diagnostics.quiet = false;
+  assert.throws(() => summarizeSoakPhase(samples, options), /Quiet/);
+});
+test('companion totals include helper bytes and independently timed CPU', () => {
+  const result = summarizeCompanionPhase(companionRows(), options);
+  assert.equal(result.total.workingSetMiB.mean, 4);
+  assert.equal(result.total.privateMiB.mean, 4);
+  assert.equal(result.helper.cpuPercentOfPC, 0.625);
+  assert.equal(result.total.approximateCpuPercentOfPC, 16.25);
+});
+test('missing, stale, restarted and out-of-period helper samples are rejected', () => {
+  for (const mutate of [s => { s.windowTracker.stats = null; }, s => { s.windowTracker.pid++; },
+    s => { s.windowTracker.ready = false; }, s => { s.windowTracker.stats.receivedAtMs = 0; },
+    s => { s.windowTracker.stats.cpuMs = -1; }, s => { s.windowTracker.stats.monotonicMs += 3000; }]) {
+    const samples = companionRows(); mutate(samples[2]);
+    assert.throws(() => summarizeCompanionPhase(samples, options));
+  }
+});
 
 test('soak CPU uses cumulative time and time weighting with explicit logical processors', () => {
   const result = summarizeSoakPhase(rows(), options);

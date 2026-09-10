@@ -17,7 +17,9 @@
     "test:postures": "node scripts/postures.mjs",
     "test:placement": "node scripts/placement.mjs",
     "test:follow": "node scripts/follow-window.mjs",
-    "test:native": "node scripts/native-lifecycle.mjs"
+    "test:native": "node scripts/native-lifecycle.mjs",
+    "test:pointer": "node scripts/pointer-placement.mjs",
+    "test:resident": "node scripts/resident-check.mjs"
   },
   "engines": {
     "node": ">=24.0.0"

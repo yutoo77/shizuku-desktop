@@ -236,6 +236,11 @@ try {
     tryStartCall();
   }));
   unsubscribers.push(window.companion.onMoveMode(state => { void updateMoveMode(state); }));
+  unsubscribers.push(window.companion.onPointerPlacement(active => {
+    document.body.classList.toggle('pointer-placement', active);
+    try { if (active) avatar?.pauseForPlacement(); else avatar?.exitMoveMode(); }
+    catch (error) { reportError(error); }
+  }));
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
