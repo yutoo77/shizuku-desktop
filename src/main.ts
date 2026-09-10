@@ -10,8 +10,9 @@ import { normalizePosture } from './posture.mjs';
 import { normalizeFacing, normalizeFavorite, seatBounds, validateAnchor } from './placement.mjs';
 import { followPlacement } from './follow-policy.mjs';
 import { WindowTracker, type TrackedWindow, type TrackingEvent, type FixtureWindow } from './window-tracker';
-import { DialogueWindowController, type DialogueConnection } from './dialogue-window';
+import { DialogueWindowController, type DialogueConnection, type SpeechSynthesizer } from './dialogue-window';
 import { createOpenAIConnection } from './openai-reply.mjs';
+import { createVoicevoxSpeech } from './voicevox-speech.mjs';
 
 // A user-owned key is captured only by the main-process adapter. Do not pass it
 // to renderer/native children or persist it. Test launches cannot use this key.
@@ -31,6 +32,7 @@ let controls: BrowserWindow | null = null;
 let dialogue: DialogueWindowController | null = null;
 let dialogueTestReply: ((text: string, context: { signal: AbortSignal; history: unknown[] }) => Promise<string>) | undefined;
 let dialogueTestAI: DialogueConnection | undefined;
+let dialogueTestSpeech: SpeechSynthesizer | undefined;
 let tray: Tray | null = null;
 let trayMenu: Menu | null = null;
 let modelPath = '';
@@ -593,6 +595,7 @@ function openControls() {
   void win.loadURL(controlsUrl);
 }
 async function chooseModel() {
+  dialogue?.stopVoice();
   if (choosing || quitting || systemResting()) return;
   stopFollowing(true);
   cancelSeat();
@@ -702,8 +705,8 @@ async function start() {
   avatar.setIgnoreMouseEvents(true);
   secureWindow(avatar);
   avatar.on('closed', () => { avatarPlacementGeneration++; pendingAvatarBounds = undefined; avatar = null; if (!quitting) app.quit(); });
-  avatar.webContents.on('render-process-gone', () => { stopFollowing(true); cancelSeat(); setMoveMode(false); modelLoaded = false; contextRecovering = false; loadError = '描画が停止しました。終了して再起動してください。'; updateMenu(); });
-  avatar.webContents.on('unresponsive', () => { stopFollowing(true); cancelSeat(); setMoveMode(false); updateMenu(); });
+  avatar.webContents.on('render-process-gone', () => { dialogue?.stopVoice(); stopFollowing(true); cancelSeat(); setMoveMode(false); modelLoaded = false; contextRecovering = false; loadError = '描画が停止しました。終了して再起動してください。'; updateMenu(); });
+  avatar.webContents.on('unresponsive', () => { dialogue?.stopVoice(); stopFollowing(true); cancelSeat(); setMoveMode(false); updateMenu(); });
   ipcMain.on('avatar:seat-anchor', (event, revision, anchor) => {
     if (!trusted(event, avatar, avatarUrl) || !pendingSeat || revision !== pendingSeat.revision || !modelLoaded || !visible || !avatar) return;
     const { point, followId } = pendingSeat;
@@ -743,7 +746,7 @@ async function start() {
     if (state.ok && state.recovering) return;
     contextRecovering = state.recovering === true;
     modelLoaded = state.ok;
-    if (!state.ok) { stopFollowing(true); cancelSeat(); setMoveMode(false); }
+    if (!state.ok) { dialogue?.stopVoice(); stopFollowing(true); cancelSeat(); setMoveMode(false); }
     loadError = state.ok ? '' : String(state.error ?? 'モデル未選択').slice(0, 180);
     avatar?.webContents.send('avatar:visibility', visible);
     avatar?.webContents.send('avatar:posture', posture);
@@ -765,6 +768,15 @@ async function start() {
     canOpen: () => !quitting && !systemResting(), secure: secureWindow,
     getReply: () => process.env.SHIZUKU_TEST === '1' ? dialogueTestReply : undefined,
     getAI: () => process.env.SHIZUKU_TEST === '1' ? dialogueTestAI : dialogueAI,
+    getSpeech: () => process.env.SHIZUKU_TEST === '1'
+      ? dialogueTestSpeech ?? (async () => { throw new Error('Voice fixture is not configured'); })
+      : createVoicevoxSpeech().synthesize,
+    onMouth: (vowel, weight) => {
+      if (avatar && !avatar.isDestroyed()) avatar.webContents.send('avatar:mouth', {
+        vowel: visible && modelLoaded && !systemResting() ? vowel : null,
+        weight: visible && modelLoaded && !systemResting() ? weight : 0,
+      });
+    },
     onReply: () => {
       if (visible && modelLoaded && !systemResting() && avatar && !avatar.isDestroyed()) {
         avatar.webContents.send('avatar:called', Date.now() + 2600);
@@ -818,6 +830,7 @@ async function start() {
     openDialogue: () => dialogue?.open(), closeDialogue: () => dialogue?.close(),
     setDialogueReply: (reply: typeof dialogueTestReply) => { dialogueTestReply = reply; },
     setDialogueAI: (connection: DialogueConnection | undefined) => { dialogueTestAI = connection; },
+    setDialogueSpeech: (synthesize: SpeechSynthesizer | undefined) => { dialogueTestSpeech = synthesize; },
     tray: () => tray, trayMenu: () => trayMenu,
     setMoveMode, moveState: () => ({ active: moveMode, revision: moveRevision, shape: moveShape, dragging: !!moveStart }),
     togglePointerPlacement, finishPointerPlacement, tickPointerPlacement,

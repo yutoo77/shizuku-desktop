@@ -11,6 +11,8 @@ import { ModelImages, trackModelImages } from './model-images';
 import { STANDING_POSE, SITTING_POSE, POSTURE_TRANSITION_MS, postureEase } from './posture.mjs';
 
 export type Posture = 'standing' | 'sitting';
+export type MouthVowel = 'aa' | 'ih' | 'ou' | 'ee' | 'oh';
+const MOUTH_VOWELS: readonly MouthVowel[] = ['aa', 'ih', 'ou', 'ee', 'oh'];
 
 export interface AvatarDiagnostics {
   quiet: boolean;
@@ -25,6 +27,9 @@ export interface AvatarDiagnostics {
   moving: boolean;
   reacting: boolean;
   reactionProgress: number;
+  mouthVowel: MouthVowel | null;
+  mouthWeight: number;
+  mouthWeights: Record<MouthVowel, number>;
   posture: Posture;
   postureBlend: number;
   changingPosture: boolean;
@@ -55,6 +60,7 @@ export class Avatar {
   private modelImages: ModelImages | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private reactionTimer: ReturnType<typeof setTimeout> | null = null;
+  private mouthTimer: ReturnType<typeof setTimeout> | null = null;
   private reactionStarted: number | null = null;
   private reactionExpression: string | null = null;
   private reactionExpressionRest = 0;
@@ -89,6 +95,7 @@ export class Avatar {
     quiet: false, facing: 'right', changingFacing: false, seatAnchor: null,
     loaded: false, visible: true, animating: false, contextLost: false, reducedMotion: false, moving: false,
     reacting: false, reactionProgress: 0,
+    mouthVowel: null, mouthWeight: 0, mouthWeights: { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 },
     posture: 'standing', postureBlend: 0, changingPosture: false,
     renderedFrames: 0, fps: 0, modelName: null, triangles: 0, drawCalls: 0,
     geometries: 0, textures: 0, loadTimeMs: null, pixelRatio: 1, error: null,
@@ -191,6 +198,7 @@ export class Avatar {
     this.loadVersion += 1;
     this.pause();
     this.cancelReaction();
+    this.clearMouth();
     this.moving = false;
     this.diagnostics.moving = false;
     if (this.vrm) {
@@ -237,6 +245,7 @@ export class Avatar {
     else {
       this.pause();
       this.cancelReaction();
+      this.clearMouth();
       this.finishPosture();
       this.finishFacing();
     }
@@ -256,6 +265,45 @@ export class Avatar {
   }
 
   private still(): boolean { return this.motion.matches || this.quiet; }
+
+  /** Explicit speech can move only the mouth even when idle motion is disabled. */
+  public setMouth(vowel: MouthVowel | null, weight: number): void {
+    if (!this.hasContext() || !this.visible || this.moving || !this.vrm) { this.clearMouth(); return; }
+    if ((vowel !== null && !MOUTH_VOWELS.includes(vowel)) || !Number.isFinite(weight) || weight < 0 || weight > 1) return;
+    if (this.mouthTimer !== null) clearTimeout(this.mouthTimer);
+    this.mouthTimer = null;
+    const expressions = this.vrm.expressionManager;
+    const supported = vowel !== null && Boolean(expressions?.expressionMap[vowel]);
+    this.diagnostics.mouthVowel = supported && weight > 0 ? vowel : null;
+    this.diagnostics.mouthWeight = supported ? weight : 0;
+    for (const name of MOUTH_VOWELS) {
+      const value = supported && name === vowel ? weight : 0;
+      this.diagnostics.mouthWeights[name] = value;
+      if (expressions?.expressionMap[name]) expressions.setValue(name, value);
+    }
+    // The ordinary 30 Hz render timer will consume the expression. A quiet pose
+    // draws only on speech samples; no idle timer or spring simulation is added.
+    if (this.still()) { expressions?.update(); this.renderCurrentFrame(); }
+    if (this.diagnostics.mouthWeight > 0) {
+      this.mouthTimer = setTimeout(() => { this.mouthTimer = null; this.clearMouth(true); }, 250);
+    }
+  }
+
+  private clearMouth(redraw = false): void {
+    if (this.mouthTimer !== null) clearTimeout(this.mouthTimer);
+    this.mouthTimer = null;
+    const changed = this.diagnostics.mouthWeight > 0;
+    this.diagnostics.mouthVowel = null;
+    this.diagnostics.mouthWeight = 0;
+    for (const name of MOUTH_VOWELS) {
+      this.diagnostics.mouthWeights[name] = 0;
+      if (this.vrm?.expressionManager?.expressionMap[name]) this.vrm.expressionManager.setValue(name, 0);
+    }
+    if (redraw && changed && this.hasContext() && this.visible && this.vrm) {
+      this.vrm.expressionManager?.update();
+      this.renderCurrentFrame();
+    }
+  }
 
   public setPresence(facing: 'left' | 'right', quiet: boolean): void {
     if (this.disposed || (facing === this.facing && quiet === this.quiet)) return;
@@ -370,6 +418,7 @@ export class Avatar {
     if (!this.hasContext() || !this.visible || !this.vrm) {
       throw new Error('しずくが表示されてから、もう一度試してください。');
     }
+    this.clearMouth(true);
     this.pause();
     // Cancel pending work without updating the frozen bones/morph targets. The
     // snapshot below keeps matching the exact displayed pose throughout dragging.
@@ -430,6 +479,7 @@ export class Avatar {
     this.diagnostics.contextLost = true;
     this.pause();
     this.cancelReaction();
+    this.clearMouth();
     this.moving = false;
     this.diagnostics.moving = false;
     this.diagnostics.triangles = 0;

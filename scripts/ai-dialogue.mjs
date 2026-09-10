@@ -168,7 +168,10 @@ try {
     companion: typeof window.companion, ownTestHook: typeof window.__shizuku,
     text: document.body.textContent,
   }));
-  assert.deepEqual(bridge.keys, ['cancel', 'clear', 'close', 'getState', 'onChanged', 'send', 'setProvider']);
+  assert.deepEqual(bridge.keys, [
+    'cancel', 'clear', 'close', 'getState', 'mouth', 'onChanged', 'onSpeech', 'onSpeechStop',
+    'reportVoice', 'send', 'setProvider', 'setVoice', 'stopVoice',
+  ]);
   for (const key of ['require', 'process', 'companion', 'ownTestHook']) assert.equal(bridge[key], 'undefined');
   assert.ok(!JSON.stringify(bridge).includes(fakeKey));
   assert.deepEqual(Object.keys(bridge.state.connection).sort(), ['available', 'contextCharacters', 'historyTurns', 'maxOutputTokens', 'model']);

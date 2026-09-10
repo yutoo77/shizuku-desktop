@@ -1,5 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('companion', {
+  onMouth: (callback: (state: {vowel: 'aa'|'ih'|'ou'|'ee'|'oh'|null; weight: number}) => void) => {
+    const listener = (_event: unknown, state: {vowel?: unknown; weight?: unknown} | null) => {
+      if (!state || typeof state.weight !== 'number' || !Number.isFinite(state.weight) || state.weight < 0 || state.weight > 1) return;
+      const vowel = state.vowel;
+      if (vowel !== null && vowel !== 'aa' && vowel !== 'ih' && vowel !== 'ou' && vowel !== 'ee' && vowel !== 'oh') return;
+      callback({ vowel, weight: vowel === null ? 0 : state.weight });
+    };
+    ipcRenderer.on('avatar:mouth', listener);
+    return () => ipcRenderer.removeListener('avatar:mouth', listener);
+  },
   onPresence: (callback: (state: { facing: 'left' | 'right'; quiet: boolean }) => void) => {
     const listener = (_event: unknown, state: { facing?: unknown; quiet?: unknown } | null) => {
       if (state && (state.facing === 'left' || state.facing === 'right') && typeof state.quiet === 'boolean') callback({ facing: state.facing, quiet: state.quiet });

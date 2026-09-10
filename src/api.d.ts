@@ -7,6 +7,7 @@ declare global {
       onVisibility(callback: (visible: boolean) => void): () => void;
       onModelChanged(callback: () => void): () => void;
       onCalled(callback: (expiresAt: number) => void): () => void;
+      onMouth(callback: (state: {vowel: 'aa'|'ih'|'ou'|'ee'|'oh'|null; weight: number}) => void): () => void;
       onPosture(callback: (posture: 'standing' | 'sitting') => void): () => void;
       onPresence(callback: (state: { facing: 'left' | 'right'; quiet: boolean }) => void): () => void;
       onSeatRequest(callback: (revision: number | null) => void): () => void;

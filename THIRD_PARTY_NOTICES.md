@@ -8,6 +8,8 @@ VRM の読み込み後の骨格最適化と腕の基本姿勢について、[ada
 
 小さな会話の試作では、同commitの`backend/app/character_profile.py`にある月白しずくの名前・一人称・控えめな返答方針と、既存BackendのOpenAI接続設定を参照しています。会話セッション・定型返答・main処理からのOpenAI Responses接続はこのアプリ用に作成し、既存のPython Backendを起動・移植していません。OpenAIのAPIは同社の利用条件と料金に従う外部サービスで、ソースのMIT Licenseに含まれません。
 
+音声では既存アプリの`frontend/src/speech/SpeechClient.ts`と`LipSyncController.ts`の、音声と口形を分ける設計・音量に応じた口の動きを参照しました。ローカルVOICEVOXへの通信、音声の検証・破棄、デスクトップ側の口形更新はこのアプリ用に実装し、既存の会話・音声コード全体やPython Backendは移植していません。
+
 ```text
 MIT License
 
@@ -56,4 +58,10 @@ Electron の配布物には Chromium・Node.js などの構成要素と、それ
 
 ## 音声・その他の素材
 
-今回の試作には VOICEVOX、音声ライブラリ、生成音声、私的な録音は同梱せず、音声機能自体も接続していません。Desktop Mate や市販 DLC のモデル・音声・台詞・固有設定は利用していません。通知領域の月のアイコンは、このアプリ内の図形処理で描画しています。
+任意の読み上げは、利用者が別に起動した標準VOICEVOXの冥鳴ひまり・ノーマル（スタイルID 14）を使います。音声クレジットは **VOICEVOX:冥鳴ひまり** で、会話窓の音声設定にも表示します。VOICEVOX本体、音声ライブラリ、生成音声、私的な録音は同梱せず、自動取得・自動起動も行いません。
+
+2026-09-10に[VOICEVOXソフトウェア利用規約](https://voicevox.hiroshiba.jp/term/)と[VOICEVOX:冥鳴ひまりの利用規約](https://www.meimeihimari.com/terms-of-use)を確認しました。音声の利用には両方の条件とクレジット表記が適用されます。冥鳴ひまりの公式Q&Aはオリジナルキャラクターの声への利用を認めていますが、このアプリが音声やキャラクターの権利を取得する意味ではありません。音声を含む作品を公開する場合も、両規約を確認してクレジットを付けてください。ソースのMIT LicenseをVOICEVOXのソフトウェア・音声ライブラリ・生成音声へ適用しないでください。
+
+エンジンAPIの接続方法と通常の合成の中止制限は[VOICEVOX Engine公式README](https://github.com/VOICEVOX/voicevox_engine)を参照しています。このアプリはHTTPで連携し、エンジンを組み込み・再配布していません。再配布の方法を変える場合は、ソフトウェアと音声ライブラリの条件を改めて確認してください。
+
+Desktop Mate や市販 DLC のモデル・音声・台詞・固有設定は利用していません。通知領域の月のアイコンは、このアプリ内の図形処理で描画しています。

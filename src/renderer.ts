@@ -235,6 +235,14 @@ try {
     pendingCall = { revision, expires: expiresAt };
     tryStartCall();
   }));
+  unsubscribers.push(window.companion.onMouth(state => {
+    if (disposed || loading || !windowVisible || document.hidden || !avatar?.diagnostics.loaded
+      || avatar.diagnostics.contextLost || moveActive) {
+      avatar?.setMouth(null, 0);
+      return;
+    }
+    avatar.setMouth(state.vowel, state.weight);
+  }));
   unsubscribers.push(window.companion.onMoveMode(state => { void updateMoveMode(state); }));
   unsubscribers.push(window.companion.onPointerPlacement(active => {
     document.body.classList.toggle('pointer-placement', active);

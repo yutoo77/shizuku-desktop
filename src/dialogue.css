@@ -60,6 +60,9 @@ select { width: 100%; min-height: 34px; margin-top: 5px; border: 1px solid #bdcf
 #transmission { margin: 0; font-size: 11px; color: #587488; line-height: 1.4; }
 .options-panel p { margin: 0 0 10px; }
 .options-panel button { width: 100%; font-size: 12px; }
+.voice-toggle { display: flex; align-items: center; gap: 5px; margin-top: 10px; }
+.voice-toggle input { width: 16px; height: 16px; accent-color: #457ca4; }
+.voice-help { color: #587488; font-size: 11px; }
 .conversation { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 4px 3px; }
 #empty { color: #627d90; margin: 12px 1px; font-size: 13px; }
 #messages { display: flex; flex-direction: column; gap: 10px; }
