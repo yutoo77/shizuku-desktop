@@ -1,7 +1,11 @@
 name: Windows checks
 
-# Manual first: confirm the owner's Actions allowance before enabling push/PR runs.
+# Standard hosted runner; source publication was verified before enabling these triggers.
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
