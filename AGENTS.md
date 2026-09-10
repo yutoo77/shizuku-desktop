@@ -6,7 +6,7 @@
 - Check git status before editing. Do not commit models, secrets, recordings, runtime logs, build output, or research material.
 - Never infer this repository's visibility from another repository. No remote is configured initially. Ask before making it public.
 - No automatic startup, constant microphone/screen capture, external AI requests, or autonomous PC actions.
-- Explicit window following may read only the selected window's bounds/visibility. Native code must not read titles, content, input, or manipulate other windows. Test with dedicated fixture handles/PIDs; verify foreground selection separately using native input.
+- Explicit window following may read the selected window's bounds, visibility and topmost flag, and compare its immediate predecessor with our own overlay handle. Only our overlay may change stacking order. Native code must not read titles, content, input, neighbouring window properties, or manipulate other windows. Test with dedicated fixture handles/PIDs; verify foreground selection separately using native input.
 - Pointer placement may sample cursor coordinates only during the explicit, 30-second-bounded move session. Keep the avatar click-through and never restore another app's focus by force. Treat native UI interruptions as incomplete checks.
 - Renderer is sandboxed with context isolation and no Node integration. Validate all IPC senders and arguments.
 - Models are local, explicitly selected, read-only inputs. Model and source licenses remain separate.

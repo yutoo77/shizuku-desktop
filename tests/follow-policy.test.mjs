@@ -14,9 +14,14 @@ test('no headroom or offscreen contact suspends instead of silently seating insi
   assert.ok(followPlacement({ x: 500, y: 450, width: 600 }, anchor, 120, area));
 });
 test('native window messages reject invalid ids, dimensions, coordinates and states', () => {
-  const good = { type: 'window', id: 2, state: 'visible', x: 10, y: 450, width: 1000, height: 500 };
+  const good = { type: 'window', id: 2, state: 'visible', x: 10, y: 450, width: 1000, height: 500, sourceId: 'window:1234:0', topmost: false, adjacent: true, orderVersion: 1 };
   for (const change of [{ id: 0 }, { id: Infinity }, { id: '2' }, { x: NaN }, { y: 1.2 }, { width: -1 }, { height: 0 }, { x: 1000001 }, { state: 'unknown' }]) assert.throws(() => parseWindowEvent({ ...good, ...change }));
   assert.deepEqual(parseWindowEvent({ ...good, title: 'not transmitted to consumers' }), good);
   assert.deepEqual(parseWindowEvent({ type: 'end', id: 2, reason: 'closed' }), { type: 'end', id: 2, reason: 'closed' });
   assert.throws(() => parseWindowEvent({ type: 'end', id: 2, reason: 'fake' }));
+});
+test('stack metadata accepts only one bounded native window id and typed state', () => {
+  const good = { type: 'window', id: 1, state: 'visible', x: 10, y: 450, width: 1000, height: 500, sourceId: 'window:1234:0', topmost: false, adjacent: true, orderVersion: 1 };
+  for (const sourceId of ['screen:1:0', 'window:0:0', 'window:-1:0', 'window:1:1', 'window:01:0', 'window:9223372036854775808:0', null]) assert.throws(() => parseWindowEvent({ ...good, sourceId }));
+  for (const change of [{ topmost: 1 }, { adjacent: 'true' }, { orderVersion: -1 }, { orderVersion: Infinity }]) assert.throws(() => parseWindowEvent({ ...good, ...change }));
 });

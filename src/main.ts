@@ -36,7 +36,7 @@ let seatCountdown = 0;
 let placementMessage = '';
 let tracker: WindowTracker | null = null;
 let followSequence = 0;
-let following: { id: number; window: TrackedWindow | null; anchor: { x: number; y: number } | null; state: string } | null = null;
+let following: { id: number; window: TrackedWindow | null; anchor: { x: number; y: number } | null; state: string; layerAttempts: number } | null = null;
 let followCountdown = 0;
 let followTimer: NodeJS.Timeout | undefined;
 let savedBounds: Rectangle | undefined;
@@ -230,6 +230,7 @@ function stopFollowing(recover: boolean) {
   if (!following && !followCountdown) return;
   const attached = !!following;
   following = null;
+  if (attached && avatar && !avatar.isDestroyed()) avatar.setAlwaysOnTop(true, 'pop-up-menu');
   followCountdown = 0;
   clearTimeout(followTimer);
   tracker?.stop();
@@ -248,7 +249,7 @@ function startFollowing(fixture?: FixtureWindow) {
   if (quitting || !modelLoaded || contextRecovering || !tracker?.ready || !avatar) return;
   stopFollowing(false); cancelSeat(); setMoveMode(false);
   const id = ++followSequence;
-  following = { id, window: null, anchor: null, state: 'preparing' };
+  following = { id, window: null, anchor: null, state: 'preparing', layerAttempts: 0 };
   placementMessage = '';
   seatTimer = setTimeout(() => {
     if (following?.id === id && !following.anchor) { stopFollowing(true); placementMessage = '座る位置を確認できませんでした。'; updateMenu(); }
@@ -287,9 +288,25 @@ function updateFollowing() {
     }
   }
   if (bounds) {
+    const changingLayer = avatar.isAlwaysOnTop() !== target.window.topmost;
+    const revealing = !visible;
+    if (changingLayer) avatar.setAlwaysOnTop(target.window.topmost, 'pop-up-menu');
     placeAvatar(bounds);
     if (!visible) applyVisibility(true);
-  } else if (visible) applyVisibility(false);
+    if (changingLayer || revealing || !target.window.adjacent) {
+      try {
+        if (++target.layerAttempts > 4) throw new Error('Window order did not settle');
+        // Electron moves only our window, with SWP_NOACTIVATE. It does not
+        // capture the source or alter the target window's bounds/focus.
+        avatar.moveAbove(target.window.sourceId);
+      } catch {
+        stopFollowing(true); placementMessage = '窓の重なりを合わせられないため、画面端へ戻りました。'; updateMenu(); return;
+      }
+    } else target.layerAttempts = 0;
+  } else {
+    target.layerAttempts = 0;
+    if (visible) applyVisibility(false);
+  }
   if (previous !== target.state) updateMenu();
 }
 function onTrackedWindow(event: TrackingEvent) {
@@ -679,7 +696,7 @@ async function start() {
     if (!available) { stopFollowing(true); placementMessage = '窓の追従を使うには、アプリを再起動してください。'; }
     updateMenu();
   });
-  if (process.platform === 'win32') tracker.start(path.join(__dirname, 'window-tracker.exe'), process.env.SHIZUKU_TEST === '1');
+  if (process.platform === 'win32') tracker.start(path.join(__dirname, 'window-tracker.exe'), process.env.SHIZUKU_TEST === '1', avatar.getNativeWindowHandle().readBigUInt64LE().toString());
   await avatar.loadURL(avatarUrl);
   if (quitting || !avatar || avatar.isDestroyed()) return;
   if (visible) setVisible(true);

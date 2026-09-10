@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { parseWindowEvent } from './follow-policy.mjs';
 
-export type TrackedWindow = { type: 'window'; id: number; state: 'visible' | 'minimized' | 'hidden'; x: number; y: number; width: number; height: number };
+export type TrackedWindow = { type: 'window'; id: number; state: 'visible' | 'minimized' | 'hidden'; x: number; y: number; width: number; height: number; sourceId: string; topmost: boolean; adjacent: boolean; orderVersion: number };
 export type TrackingEvent = TrackedWindow | { type: 'end'; id: number; reason: string };
 export type FixtureWindow = { handle: string; pid: number };
 
@@ -18,9 +18,9 @@ export class WindowTracker {
   stats: { cpuMs: number; workingSetBytes: number; privateBytes: number; monotonicMs: number; receivedAtMs: number } | null = null;
   constructor(private readonly onEvent: (event: TrackingEvent) => void, private readonly onAvailability: (available: boolean) => void) {}
   get pid(): number | undefined { return this.child?.pid; }
-  start(executable: string, fixtureTests = false): void {
+  start(executable: string, fixtureTests = false, overlayHandle?: string): void {
     this.fixtureTests = fixtureTests;
-    const child = spawn(executable, [String(process.pid), ...(fixtureTests ? ['--fixture-tests'] : [])], { windowsHide: true, stdio: 'pipe' });
+    const child = spawn(executable, [String(process.pid), ...(fixtureTests ? ['--fixture-tests'] : []), ...(overlayHandle ? ['--overlay', overlayHandle] : [])], { windowsHide: true, stdio: 'pipe' });
     this.child = child;
     this.exitPromise = new Promise(resolve => child.once('close', () => { this.fail(); resolve(); }));
     child.on('error', () => this.fail());

@@ -1,5 +1,7 @@
 // Read-only metadata for ONE explicitly selected top-level window. No screen,
 // titles, text, input hooks, window manipulation or network APIs are used.
+// Stack inspection compares the selected window's immediate predecessor with
+// our own overlay. No neighbouring window's content, title or bounds is read.
 using System;
 using System.Diagnostics;
 using System.Globalization;
@@ -13,6 +15,8 @@ internal static class WindowTracker {
     delegate void WinEvent(IntPtr hook, uint ev, IntPtr window, int obj, int child, uint thread, uint time);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr window, uint flags);
+    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr window, uint command);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr window);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
@@ -27,6 +31,8 @@ internal static class WindowTracker {
     static Control dispatcher;
     static Process parent;
     static IntPtr selected, destroyHook;
+    static IntPtr overlay;
+    static int orderVersion;
     static uint selectedPid, selectedThread;
     static int request;
     static bool testMode;
@@ -40,7 +46,7 @@ internal static class WindowTracker {
         poll.Stop();
         if (destroyHook != IntPtr.Zero) UnhookWinEvent(destroyHook);
         destroyHook = selected = IntPtr.Zero;
-        request = 0; lastState = "";
+        request = 0; lastState = ""; orderVersion = 0;
     }
     static void End(string reason) {
         int id = request; Stop();
@@ -79,8 +85,14 @@ internal static class WindowTracker {
         if (state == "visible" && GetFrame(selected, 9, out rect, Marshal.SizeOf(typeof(Rect))) != 0) { End("unavailable"); return; }
         long width = (long)rect.Right - rect.Left, height = (long)rect.Bottom - rect.Top;
         if (state == "visible" && (width <= 0 || height <= 0 || width > 1000000 || height > 1000000)) { End("unavailable"); return; }
+        bool topmost = (GetWindowLongPtr(selected, -20).ToInt64() & 8) != 0; // WS_EX_TOPMOST
+        bool adjacent = overlay != IntPtr.Zero && GetWindow(selected, 3) == overlay; // GW_HWNDPREV
+        // A hidden overlay (for example, no headroom) needs no order retries.
+        if (state == "visible" && IsWindowVisible(overlay) && !adjacent) orderVersion++;
         string value = "{\"type\":\"window\",\"id\":" + request + ",\"state\":\"" + state
-            + "\",\"x\":" + rect.Left + ",\"y\":" + rect.Top + ",\"width\":" + width + ",\"height\":" + height + "}";
+            + "\",\"x\":" + rect.Left + ",\"y\":" + rect.Top + ",\"width\":" + width + ",\"height\":" + height
+            + ",\"sourceId\":\"window:" + selected.ToInt64() + ":0\",\"topmost\":" + (topmost ? "true" : "false")
+            + ",\"adjacent\":" + (adjacent ? "true" : "false") + ",\"orderVersion\":" + orderVersion + "}";
         if (value != lastState) { lastState = value; Emit(value); }
     }
     static void Command(string line) {
@@ -100,8 +112,17 @@ internal static class WindowTracker {
     [STAThread] static int Main(string[] args) {
         try {
             int parentId;
-            if ((args.Length != 1 && args.Length != 2) || !int.TryParse(args[0], out parentId) || parentId <= 0) return 2;
-            if (args.Length == 2) { if (args[1] != "--fixture-tests") return 2; testMode = true; }
+            if (args.Length < 1 || !int.TryParse(args[0], out parentId) || parentId <= 0) return 2;
+            for (int i = 1; i < args.Length; i++) {
+                if (args[i] == "--fixture-tests" && !testMode) testMode = true;
+                else if (args[i] == "--overlay" && overlay == IntPtr.Zero && i + 1 < args.Length) {
+                    long handle; uint owner;
+                    if (!long.TryParse(args[++i], out handle) || handle <= 0) return 2;
+                    overlay = new IntPtr(handle);
+                    GetWindowThreadProcessId(overlay, out owner);
+                    if (owner != parentId || GetAncestor(overlay, 2) != overlay) return 2;
+                } else return 2;
+            }
             parent = Process.GetProcessById(parentId);
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
             // Retain an OS handle so parent PID reuse cannot keep this helper alive.
