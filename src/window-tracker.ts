@@ -12,6 +12,7 @@ export class WindowTracker {
   private watchdog: NodeJS.Timeout | undefined;
   private lastAlive = Date.now();
   private closing = false;
+  private paused = false;
   private fixtureTests = false;
   private foregroundFixture: FixtureWindow | null = null;
   private exitPromise: Promise<void> = Promise.resolve();
@@ -44,10 +45,10 @@ export class WindowTracker {
       }
     });
     child.stderr.resume(); // Never expose process paths/errors as product UI text.
-    this.watchdog = setInterval(() => { if (Date.now() - this.lastAlive > 5000) this.fail(); }, 1000);
+    this.watchdog = setInterval(() => { if (!this.paused && Date.now() - this.lastAlive > 5000) this.fail(); }, 1000);
   }
   select(id: number, fixture?: FixtureWindow): void {
-    if (!this.ready || this.closing || !Number.isInteger(id) || id < 1 || id > 2147483647) throw new Error('Window tracker unavailable');
+    if (!this.ready || this.closing || this.paused || !Number.isInteger(id) || id < 1 || id > 2147483647) throw new Error('Window tracker unavailable');
     const target = fixture ?? this.foregroundFixture;
     if (target) {
       this.validateFixture(target);
@@ -60,7 +61,7 @@ export class WindowTracker {
     this.foregroundFixture = { ...fixture };
   }
   pick(id: number, fixture?: FixtureWindow): void {
-    if (!this.ready || this.closing || !Number.isInteger(id) || id < 1 || id > 2147483647) throw new Error('Window tracker unavailable');
+    if (!this.ready || this.closing || this.paused || !Number.isInteger(id) || id < 1 || id > 2147483647) throw new Error('Window tracker unavailable');
     const target = fixture ?? this.foregroundFixture;
     if (target) {
       this.validateFixture(target);
@@ -71,6 +72,12 @@ export class WindowTracker {
     if (!this.fixtureTests || !/^[1-9][0-9]{0,18}$/.test(fixture.handle) || !Number.isInteger(fixture.pid) || fixture.pid <= 0 || fixture.pid > 4294967295) throw new Error('Invalid fixture');
   }
   stop(): void { if (this.ready && !this.closing) this.child?.stdin.write('stop\n'); }
+  setPaused(next: boolean): void {
+    if (next) this.stop();
+    this.paused = next;
+    // Sleep is not a helper failure. Allow a fresh heartbeat after resuming.
+    this.lastAlive = Date.now();
+  }
   private fail(): void {
     const wasReady = this.ready; this.ready = false;
     clearInterval(this.watchdog);
