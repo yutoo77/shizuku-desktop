@@ -109,21 +109,22 @@ try {
   await main(() => { const w = globalThis.__shizuku.controls(); globalThis.__shizuku.startFollowing({ handle: w.getNativeWindowHandle().readBigUInt64LE().toString(), pid: process.pid }); });
   await waitFor(async () => !(await track()).following, 'own controls rejected');
   assert.match(await controls.locator('#move-hint').textContent(), /別の窓/);
+  const selectionFixture = await fixture.evaluate(({ BrowserWindow }) => ({ handle: BrowserWindow.getAllWindows()[0].getNativeWindowHandle().readBigUInt64LE().toString(), pid: process.pid }));
+  await app.evaluate((_e, value) => globalThis.__shizuku.setForegroundFixture(value), selectionFixture);
   await controls.locator('#follow').click(); await act('follow-countdown'); await delay(3200);
   assert.equal((await track()).following, null); assert.equal((await track()).countdown, 0);
-  // Real handoff from the controls to another app requires OS input. Hide our
-  // controls for this API-driven fixture check; test physical handoff separately.
+  // Resolve native metadata for the pending selection using a dedicated
+  // fixture. Foreground handoff is verified separately with OS input.
   await main(() => globalThis.__shizuku.controls().hide());
   await fixture.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.show(); w.focus(); });
-  await waitFor(() => fixture.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFocused()), 'countdown fixture focus');
-  const countdownFixture = await fixture.evaluate(({ BrowserWindow }) => ({ handle: BrowserWindow.getAllWindows()[0].getNativeWindowHandle().readBigUInt64LE().toString(), pid: process.pid }));
-  await app.evaluate((_e, countdownFixture) => globalThis.__shizuku.scheduleFollowing(countdownFixture), countdownFixture);
-  await waitFor(async () => (await track()).following?.state === 'following', 'countdown selects fixture');
+  await waitFor(() => fixture.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFocused()), 'selection fixture focus');
+  await app.evaluate((_e, value) => { globalThis.__shizuku.scheduleFollowing(value); globalThis.__shizuku.resolveSelectionFixture(value); }, selectionFixture);
+  await waitFor(async () => (await track()).following?.state === 'following', 'selection accepts fixture metadata');
   await main(() => globalThis.__shizuku.openControls());
   await controls.screenshot({ path: path.join(directory, 'controls.png') });
   assert.equal(await controls.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   assert.equal(await controls.locator('#follow').textContent(), '窓の追従をやめる');
-  results.push('Closing releases target and returns to screen edge; another window never reattaches; own controls are rejected; countdown selects/cancels correctly.');
+  results.push('Closing releases target and returns to screen edge; another window never reattaches; own controls are rejected; bounded window selection selects/cancels correctly.');
 
   const beforeStats = await track(); await delay(2500); const afterStats = await track();
   assert.ok(afterStats.stats?.workingSetBytes > 0);

@@ -37,6 +37,10 @@ try {
   results.push('An oversized unterminated command cannot grow an unbounded input buffer.');
   h = await helper(process.pid); h.stdin.write('test-select 1 123 123\n'); await exited(h);
   results.push('Normal helper mode rejects the fixture-only selection command.');
+  h = await helper(process.pid); h.stdin.write('test-foreground 1 123 123\n'); await exited(h);
+  results.push('Normal helper mode rejects the guarded foreground fixture command.');
+  h = await helper(process.pid); h.stdin.write('test-pick 1 123 123\n'); await exited(h);
+  results.push('Normal helper mode rejects the guarded picker fixture command.');
 } catch (error) { failure = error; }
 finally {
   for (const child of children) if (child.exitCode === null) { child.kill(); await once(child, 'close').catch(() => {}); }

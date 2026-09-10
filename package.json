@@ -18,6 +18,7 @@
     "test:placement": "node scripts/placement.mjs",
     "test:follow": "node scripts/follow-window.mjs",
     "test:order": "node scripts/window-order.mjs",
+    "test:picker": "node scripts/window-picker.mjs",
     "test:native": "node scripts/native-lifecycle.mjs",
     "test:pointer": "node scripts/pointer-placement.mjs",
     "test:resident": "node scripts/resident-check.mjs"

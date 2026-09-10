@@ -13,6 +13,7 @@ export class WindowTracker {
   private lastAlive = Date.now();
   private closing = false;
   private fixtureTests = false;
+  private foregroundFixture: FixtureWindow | null = null;
   private exitPromise: Promise<void> = Promise.resolve();
   ready = false;
   stats: { cpuMs: number; workingSetBytes: number; privateBytes: number; monotonicMs: number; receivedAtMs: number } | null = null;
@@ -47,11 +48,27 @@ export class WindowTracker {
   }
   select(id: number, fixture?: FixtureWindow): void {
     if (!this.ready || this.closing || !Number.isInteger(id) || id < 1 || id > 2147483647) throw new Error('Window tracker unavailable');
-    if (fixture) {
-      if (!this.fixtureTests || !/^[1-9][0-9]{0,18}$/.test(fixture.handle) || !Number.isInteger(fixture.pid) || fixture.pid <= 0 || fixture.pid > 4294967295) throw new Error('Invalid fixture');
-      this.child?.stdin.write(`test-select ${id} ${fixture.handle} ${fixture.pid}\n`); return;
+    const target = fixture ?? this.foregroundFixture;
+    if (target) {
+      this.validateFixture(target);
+      this.child?.stdin.write(`${fixture ? 'test-select' : 'test-foreground'} ${id} ${target.handle} ${target.pid}\n`); return;
     }
     this.child?.stdin.write(`select ${id}\n`);
+  }
+  setForegroundFixture(fixture: FixtureWindow): void {
+    this.validateFixture(fixture);
+    this.foregroundFixture = { ...fixture };
+  }
+  pick(id: number, fixture?: FixtureWindow): void {
+    if (!this.ready || this.closing || !Number.isInteger(id) || id < 1 || id > 2147483647) throw new Error('Window tracker unavailable');
+    const target = fixture ?? this.foregroundFixture;
+    if (target) {
+      this.validateFixture(target);
+      this.child?.stdin.write(`test-pick ${id} ${target.handle} ${target.pid}\n`);
+    } else this.child?.stdin.write(`pick ${id}\n`);
+  }
+  private validateFixture(fixture: FixtureWindow): void {
+    if (!this.fixtureTests || !/^[1-9][0-9]{0,18}$/.test(fixture.handle) || !Number.isInteger(fixture.pid) || fixture.pid <= 0 || fixture.pid > 4294967295) throw new Error('Invalid fixture');
   }
   stop(): void { if (this.ready && !this.closing) this.child?.stdin.write('stop\n'); }
   private fail(): void {

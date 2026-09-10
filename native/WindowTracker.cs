@@ -36,6 +36,10 @@ internal static class WindowTracker {
     static uint selectedPid, selectedThread;
     static int request;
     static bool testMode;
+    static bool picking;
+    static IntPtr pickFixture;
+    static uint pickExpectedPid;
+    static long pickDeadline;
     static string lastState = "";
     static System.Windows.Forms.Timer poll;
     // Root this delegate for the entire native hook lifetime.
@@ -47,6 +51,7 @@ internal static class WindowTracker {
         if (destroyHook != IntPtr.Zero) UnhookWinEvent(destroyHook);
         destroyHook = selected = IntPtr.Zero;
         request = 0; lastState = ""; orderVersion = 0;
+        picking = false; pickFixture = IntPtr.Zero; pickExpectedPid = 0;
     }
     static void End(string reason) {
         int id = request; Stop();
@@ -55,16 +60,34 @@ internal static class WindowTracker {
     static void OnDestroyed(IntPtr hook, uint ev, IntPtr window, int obj, int child, uint thread, uint time) {
         if (window == selected && obj == 0 && child == 0 && request != 0) End("closed");
     }
+    static bool Eligible(IntPtr window, uint pid) {
+        if (window == IntPtr.Zero || pid == 0 || pid == parent.Id || pid == Process.GetCurrentProcess().Id) return false;
+        var name = new StringBuilder(128);
+        GetClassName(window, name, name.Capacity);
+        string className = name.ToString();
+        return className != "Progman" && className != "WorkerW" && className != "Shell_TrayWnd" && className != "Shell_SecondaryTrayWnd";
+    }
+    static void Pick(int id, IntPtr knownWindow, uint expectedPid) {
+        Stop(); request = id; picking = true;
+        pickFixture = knownWindow; pickExpectedPid = expectedPid;
+        pickDeadline = Stopwatch.GetTimestamp() + 20 * Stopwatch.Frequency;
+        poll.Start();
+    }
+    static void PollPick() {
+        if (Stopwatch.GetTimestamp() >= pickDeadline) { End("timeout"); return; }
+        IntPtr candidate = GetAncestor(GetForegroundWindow(), 2);
+        if (candidate == IntPtr.Zero || (pickFixture != IntPtr.Zero && candidate != pickFixture)) return;
+        uint pid; GetWindowThreadProcessId(candidate, out pid);
+        if (pickExpectedPid != 0 && pid != pickExpectedPid) { End("ineligible"); return; }
+        if (!Eligible(candidate, pid) || !IsWindowVisible(candidate) || IsIconic(candidate)) return;
+        Select(request, candidate, pickExpectedPid);
+    }
     static void Select(int id, IntPtr knownWindow, uint expectedPid) {
         Stop(); request = id;
         selected = GetAncestor(knownWindow == IntPtr.Zero ? GetForegroundWindow() : knownWindow, 2); // GA_ROOT, never a child control.
         selectedThread = GetWindowThreadProcessId(selected, out selectedPid);
         if (expectedPid != 0 && selectedPid != expectedPid) { End("ineligible"); return; }
-        var name = new StringBuilder(128);
-        GetClassName(selected, name, name.Capacity);
-        string className = name.ToString();
-        if (selected == IntPtr.Zero || selectedPid == 0 || selectedPid == parent.Id || selectedPid == Process.GetCurrentProcess().Id
-            || className == "Progman" || className == "WorkerW" || className == "Shell_TrayWnd" || className == "Shell_SecondaryTrayWnd") {
+        if (!Eligible(selected, selectedPid)) {
             End("ineligible"); return;
         }
         // Only this process/thread's window-destruction events; no input hooks.
@@ -75,6 +98,7 @@ internal static class WindowTracker {
     }
     static void Poll() {
         if (request == 0) return;
+        if (picking) { PollPick(); return; }
         uint pid; uint thread = GetWindowThreadProcessId(selected, out pid);
         if (!IsWindow(selected) || pid != selectedPid || thread != selectedThread) { End("closed"); return; }
         string state = "visible";
@@ -100,14 +124,21 @@ internal static class WindowTracker {
         if (line == "stop") { Stop(); return; }
         int id;
         if (line.StartsWith("select ", StringComparison.Ordinal) && int.TryParse(line.Substring(7), out id) && id > 0) { Select(id, IntPtr.Zero, 0); return; }
+        if (line.StartsWith("pick ", StringComparison.Ordinal) && int.TryParse(line.Substring(5), out id) && id > 0) { Pick(id, IntPtr.Zero, 0); return; }
         // Only isolated acceptance builds use a known fixture HWND/PID. This
         // prevents foreground races from inspecting any unrelated user window.
         var parts = line.Split(' '); long handle; uint pid;
-        if (testMode && parts.Length == 4 && parts[0] == "test-select" && int.TryParse(parts[1], out id) && id > 0
+        if (testMode && parts.Length == 4 && (parts[0] == "test-select" || parts[0] == "test-foreground" || parts[0] == "test-pick") && int.TryParse(parts[1], out id) && id > 0
             && long.TryParse(parts[2], out handle) && handle > 0 && uint.TryParse(parts[3], out pid) && pid > 0) {
+            if (parts[0] == "test-pick") { Pick(id, new IntPtr(handle), pid); return; }
+            // Exercise real foreground selection without ever inspecting an
+            // unrelated window if the user interrupts a selection/input test.
+            if (parts[0] == "test-foreground" && GetAncestor(GetForegroundWindow(), 2) != new IntPtr(handle)) {
+                Stop(); request = id; End("ineligible"); return;
+            }
             Select(id, new IntPtr(handle), pid); return;
         }
-        Application.ExitThread(); // This pipe accepts only three bounded commands.
+        Application.ExitThread(); // Reject commands outside this bounded protocol.
     }
     [STAThread] static int Main(string[] args) {
         try {

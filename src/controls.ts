@@ -48,7 +48,7 @@ function renderStatus(): void {
   seatButton.textContent = currentStatus.seatCountdown || currentStatus.seating ? '場所の指定をやめる' : '3秒後のポインター位置に座る';
   quietButton.setAttribute('aria-pressed', String(currentStatus.quiet));
   quietButton.textContent = currentStatus.quiet ? '動きを戻す' : '動きを休める';
-  followButton.textContent = currentStatus.following || currentStatus.followCountdown ? '窓の追従をやめる' : '3秒後に選んだ窓に座る';
+  followButton.textContent = currentStatus.following ? '窓の追従をやめる' : currentStatus.followCountdown ? '窓の選択をやめる' : '窓を選んで座る';
   followButton.setAttribute('aria-pressed', String(currentStatus.following || !!currentStatus.followCountdown));
   document.querySelector('#move-hint')!.textContent = currentStatus.pointerPlacing
     ? `Ctrl + Alt + Shift + Mで決定。${currentStatus.placementEscape ? 'Esc・' : ''}30秒経過で取消。`

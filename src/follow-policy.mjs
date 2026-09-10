@@ -3,7 +3,7 @@ import { seatBounds } from './placement.mjs';
 /** The selected source id stays inside main; no titles, content or paths. */
 export function parseWindowEvent(value) {
   if (!value || typeof value !== 'object' || !Number.isInteger(value.id) || value.id < 1 || value.id > 2147483647) throw new Error('Invalid follow request');
-  if (value.type === 'end' && ['closed', 'ineligible', 'unavailable'].includes(value.reason)) return { type: 'end', id: value.id, reason: value.reason };
+  if (value.type === 'end' && ['closed', 'ineligible', 'unavailable', 'timeout'].includes(value.reason)) return { type: 'end', id: value.id, reason: value.reason };
   if (value.type !== 'window' || !['visible', 'hidden', 'minimized'].includes(value.state)) throw new Error('Invalid window state');
   if (!['x', 'y', 'width', 'height'].every(key => Number.isSafeInteger(value[key]) && Math.abs(value[key]) <= 1000000)) throw new Error('Invalid window bounds');
   if (value.state === 'visible' && (value.width < 1 || value.height < 1)) throw new Error('Empty window');

@@ -18,6 +18,7 @@ test('native window messages reject invalid ids, dimensions, coordinates and sta
   for (const change of [{ id: 0 }, { id: Infinity }, { id: '2' }, { x: NaN }, { y: 1.2 }, { width: -1 }, { height: 0 }, { x: 1000001 }, { state: 'unknown' }]) assert.throws(() => parseWindowEvent({ ...good, ...change }));
   assert.deepEqual(parseWindowEvent({ ...good, title: 'not transmitted to consumers' }), good);
   assert.deepEqual(parseWindowEvent({ type: 'end', id: 2, reason: 'closed' }), { type: 'end', id: 2, reason: 'closed' });
+  assert.deepEqual(parseWindowEvent({ type: 'end', id: 2, reason: 'timeout' }), { type: 'end', id: 2, reason: 'timeout' });
   assert.throws(() => parseWindowEvent({ type: 'end', id: 2, reason: 'fake' }));
 });
 test('stack metadata accepts only one bounded native window id and typed state', () => {

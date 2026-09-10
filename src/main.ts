@@ -39,6 +39,8 @@ let followSequence = 0;
 let following: { id: number; window: TrackedWindow | null; anchor: { x: number; y: number } | null; state: string; layerAttempts: number } | null = null;
 let followCountdown = 0;
 let followTimer: NodeJS.Timeout | undefined;
+let windowSelection: { id: number; deadline: number } | null = null;
+let selectionEscape = false;
 let savedBounds: Rectangle | undefined;
 let loadError = '';
 let modelLoaded = false;
@@ -130,6 +132,7 @@ function reset() {
 }
 function callAvatar() {
   if (quitting || !avatar || avatar.isDestroyed()) return;
+  cancelWindowSelection('');
   cancelSeat();
   if (following && (!visible || !following.anchor)) stopFollowing(true);
   if (contextRecovering) return;
@@ -164,6 +167,7 @@ function setPosture(value: unknown, keepFollowing = false) {
 function setPresence(nextFacing: unknown, nextQuiet: unknown) {
   if ((nextFacing !== 'left' && nextFacing !== 'right') || typeof nextQuiet !== 'boolean') throw new Error('Unknown presence');
   if (quitting || !avatar || avatar.isDestroyed() || (nextFacing === facing && nextQuiet === quiet)) return;
+  cancelWindowSelection('');
   if (nextFacing !== facing || (following && !following.anchor)) stopFollowing(false);
   cancelSeat();
   setMoveMode(false);
@@ -232,6 +236,9 @@ function stopFollowing(recover: boolean) {
   following = null;
   if (attached && avatar && !avatar.isDestroyed()) avatar.setAlwaysOnTop(true, 'pop-up-menu');
   followCountdown = 0;
+  windowSelection = null;
+  if (selectionEscape) globalShortcut.unregister('Escape');
+  selectionEscape = false;
   clearTimeout(followTimer);
   tracker?.stop();
   if (attached) clearTimeout(seatTimer);
@@ -249,28 +256,40 @@ function startFollowing(fixture?: FixtureWindow) {
   if (quitting || !modelLoaded || contextRecovering || !tracker?.ready || !avatar) return;
   stopFollowing(false); cancelSeat(); setMoveMode(false);
   const id = ++followSequence;
-  following = { id, window: null, anchor: null, state: 'preparing', layerAttempts: 0 };
   placementMessage = '';
-  seatTimer = setTimeout(() => {
-    if (following?.id === id && !following.anchor) { stopFollowing(true); placementMessage = '座る位置を確認できませんでした。'; updateMenu(); }
-  }, 4000);
+  prepareFollowing(id);
   try { tracker.select(id, fixture); }
   catch { stopFollowing(true); placementMessage = '追従を始められませんでした。再起動して試してください。'; }
   updateMenu();
 }
+function prepareFollowing(id: number) {
+  following = { id, window: null, anchor: null, state: 'preparing', layerAttempts: 0 };
+  seatTimer = setTimeout(() => {
+    if (following?.id === id && !following.anchor) { stopFollowing(true); placementMessage = '座る位置を確認できませんでした。'; updateMenu(); }
+  }, 4000);
+}
 function scheduleFollowing(fixture?: FixtureWindow) {
   if (fixture && process.env.SHIZUKU_TEST !== '1') return;
   if (following || followCountdown) { stopFollowing(true); return; }
-  if (quitting || !modelLoaded || !tracker?.ready) return;
+  if (quitting || !modelLoaded || contextRecovering || !tracker?.ready) return;
   cancelSeat(); setMoveMode(false);
-  placementMessage = ''; followCountdown = 3;
-  const tick = () => {
-    if (quitting || followCountdown === 0) return;
-    followCountdown--;
-    if (followCountdown === 0) { startFollowing(fixture); return; }
-    updateMenu(); followTimer = setTimeout(tick, 1000);
-  };
-  updateMenu(); followTimer = setTimeout(tick, 1000);
+  placementMessage = ''; followCountdown = 20;
+  windowSelection = { id: ++followSequence, deadline: Date.now() + 20_000 };
+  selectionEscape = globalShortcut.register('Escape', () => cancelWindowSelection());
+  try { tracker.pick(windowSelection.id, fixture); }
+  catch { cancelWindowSelection('窓を選べませんでした。再起動して試してください。'); return; }
+  updateMenu(); followTimer = setTimeout(tickWindowSelection, 250);
+}
+function cancelWindowSelection(message = '窓の選択を取り消しました。') {
+  if (!windowSelection) return;
+  stopFollowing(false); placementMessage = message; updateMenu();
+}
+function tickWindowSelection(now = Date.now()) {
+  if (quitting || !windowSelection) return;
+  const remaining = Math.max(0, Math.ceil((windowSelection.deadline - now) / 1000));
+  if (!remaining) { cancelWindowSelection(); return; }
+  if (remaining !== followCountdown) { followCountdown = remaining; updateMenu(); }
+  followTimer = setTimeout(tickWindowSelection, 250);
 }
 function updateFollowing() {
   const target = following;
@@ -310,7 +329,17 @@ function updateFollowing() {
   if (previous !== target.state) updateMenu();
 }
 function onTrackedWindow(event: TrackingEvent) {
-  if (quitting || !following || event.id !== following.id) return;
+  if (quitting) return;
+  if (windowSelection?.id === event.id) {
+    if (Date.now() >= windowSelection.deadline) { cancelWindowSelection(); return; }
+    if (event.type === 'end') { cancelWindowSelection(); return; }
+    clearTimeout(followTimer); followCountdown = 0; windowSelection = null;
+    if (selectionEscape) globalShortcut.unregister('Escape');
+    selectionEscape = false;
+    prepareFollowing(event.id);
+    updateMenu();
+  }
+  if (!following || event.id !== following.id) return;
   if (event.type === 'end') {
     const reason = event.reason;
     stopFollowing(true);
@@ -336,7 +365,7 @@ function onTrackedWindow(event: TrackingEvent) {
   updateFollowing();
 }
 function followMessage(): string {
-  if (followCountdown) return `あと${followCountdown}秒。座らせたい窓をクリックしてね。`;
+  if (followCountdown) return `座らせたい窓をクリックしてね。${selectionEscape ? 'Escで取消。' : ''}あと${followCountdown}秒`;
   if (!following) return '';
   if (following.state === 'following') return '窓の動きについていきます。';
   if (following.state === 'preparing') return '座る位置を合わせています。';
@@ -455,7 +484,9 @@ function updateMenu() {
     { label: pointerPlacement ? 'この位置に置く' : 'ポインターで移動', enabled: modelLoaded, click: togglePointerPlacement },
     { label: '位置を動かす…', click: openControls },
     { label: seatCountdown || pendingSeat ? '座る場所の指定をやめる' : '3秒後のポインター位置に座る', enabled: modelLoaded, click: scheduleSeat },
-    { label: following || followCountdown ? '窓の追従をやめる' : '3秒後に選んだ窓に座る', enabled: modelLoaded && !!tracker?.ready, click: () => scheduleFollowing() },
+    // A tray menu can dismiss back to the previously focused app. Start the
+    // picker from our controls so that this cannot silently select that app.
+    { label: following ? '窓の追従をやめる' : followCountdown ? '窓の選択をやめる' : '座る窓を選ぶ…', enabled: modelLoaded && !!tracker?.ready, click: () => following || followCountdown ? stopFollowing(true) : openControls() },
     { label: 'お気に入りの位置', submenu: [
       { label: '今の位置を覚える', click: saveFavorite },
       { label: '覚えた位置へ戻る', enabled: !!favorite, click: restoreFavorite },
@@ -504,7 +535,7 @@ function openControls() {
     saveSoon();
   });
   // An older window can finish closing after its replacement has opened.
-  win.on('close', () => { if (controls === win) controls = null; });
+  win.on('close', () => { if (controls === win) { controls = null; cancelWindowSelection(''); } });
   win.on('closed', () => { if (controls === win) controls = null; });
   void win.loadURL(controlsUrl);
 }
@@ -716,6 +747,15 @@ async function start() {
     pointerState: () => ({ active: !!pointerPlacement, escape: placementEscape, timer: !!pointerTimer, origin: pointerPlacement?.bounds }),
     setScale, setPosture, setPresence, seatAtPoint, cancelSeat,
     startFollowing, scheduleFollowing, stopFollowing, onTrackedWindow,
+    setForegroundFixture: (fixture: FixtureWindow) => tracker?.setForegroundFixture(fixture),
+    // API checks exercise native metadata -> selection handoff independently
+    // of Windows foreground transfer. Physical selection is checked separately.
+    resolveSelectionFixture: (fixture: FixtureWindow) => {
+      if (!windowSelection || !fixture) throw new Error('No fixture selection pending');
+      tracker?.select(windowSelection.id, fixture);
+    },
+    cancelWindowSelection, tickWindowSelection,
+    selection: () => ({ active: !!windowSelection, id: windowSelection?.id, seconds: followCountdown, escape: selectionEscape }),
     tracking: () => ({ following, countdown: followCountdown, ready: !!tracker?.ready, pid: tracker?.pid, stats: tracker?.stats }),
     status: () => ({ visible, modelLoaded, contextRecovering, loadError, shortcuts, scale, posture, facing, quiet, favorite, seatCountdown, pendingSeat, placementMessage }), metrics: () => app.getAppMetrics(),
   };
