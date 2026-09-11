@@ -328,6 +328,49 @@ try {
   const unresponsiveCount = await count(); await delay(150); assert.equal(await count(), unresponsiveCount);
   pass('A simulated avatar unresponsive event stops the independent chat playback and turns voice off without retry. The renderer was not physically stalled.');
 
+  for (const phase of ['playing', 'synthesizing']) {
+    await open();
+    const speechIndex = phase === 'playing' ? await playing() : await held('応答停止前の保留音声。');
+    const oldChat = chat;
+    const prior = await main(() => {
+      // Keep old fixture references alive deliberately: disposal must invalidate
+      // their callbacks even when test code still retains the retired window.
+      voiceFixture.unresponsiveWindow = __shizuku.dialogue();
+      voiceFixture.unresponsiveContents = voiceFixture.unresponsiveWindow.webContents;
+      const evidence = { windowId: voiceFixture.unresponsiveWindow.id, status: __shizuku.dialogueState().voice.status };
+      voiceFixture.unresponsiveWindow.emit('unresponsive');
+      return evidence;
+    });
+    assert.equal(prior.status, phase);
+    await waitFor(() => main(() => !__shizuku.dialogue()), 'Unresponsive dialogue is discarded');
+    await waitFor(async () => oldChat.isClosed(), 'Unresponsive dialogue renderer is closed');
+    assert.equal(await state(), null, 'No disposed conversation remains attached to the controller');
+    assert.deepEqual(await main(() => ({
+      windowDestroyed: voiceFixture.unresponsiveWindow.isDestroyed(),
+      rendererDestroyed: voiceFixture.unresponsiveContents.isDestroyed(),
+    })), { windowDestroyed: true, rendererDestroyed: true });
+    await aborted(speechIndex);
+    await neutral();
+
+    await open();
+    const replacementId = await main(() => __shizuku.dialogue().id);
+    assert.notEqual(replacementId, prior.windowId);
+    await noReplay(speechIndex);
+    // A queued event from the retired owner must not close its replacement.
+    await main(() => voiceFixture.unresponsiveWindow.emit('unresponsive'));
+    assert.equal(await main(() => __shizuku.dialogue()?.id), replacementId);
+    const recovered = await state();
+    assert.equal(recovered.provider, 'local-demo');
+    assert.deepEqual(recovered.messages, []);
+    assert.equal(recovered.voice.enabled, false);
+    assert.equal(recovered.voice.status, 'idle');
+    assert.equal((await probeState()).starts, 0);
+    await neutral();
+    playbackEvidence.push({ phase: `dialogue-unresponsive-${phase}`, previous: prior, replacementId, playback: await probeState() });
+    await main(() => { delete voiceFixture.unresponsiveWindow; delete voiceFixture.unresponsiveContents; });
+    pass(`A simulated dialogue BrowserWindow unresponsive event during ${phase} destroys the old window/renderer, aborts speech, discards its session and resets the mouth. A retained old fixture result/event cannot replay audio or close the new empty local-demo chat with voice off. No actual renderer hang was induced.`);
+  }
+
   const failed = await held('音声エラーの確認。');
   await app.evaluate((_electron, index) => voiceFixture.calls[index].reject(new Error('fixture-private-engine-response')), failed);
   await waitFor(async () => (await state()).voice.status === 'error', 'Safe voice error displayed');
@@ -404,7 +447,7 @@ try {
   assert.deepEqual(quitEvidence, { lastSpeechAborted: true, networkAttempts: 0, dialogueDisposed: true });
   await writeFile(path.join(directory, 'quit-abort.json'), JSON.stringify({ ...quitEvidence, speechIndex: quitting }, null, 2));
   const saved = JSON.parse(await readFile(path.join(directory, 'local.config.json'), 'utf8'));
-  assert.deepEqual(Object.keys(saved).sort(), ['bounds', 'facing', 'favorite', 'modelPath', 'posture', 'quiet', 'scale']);
+  assert.deepEqual(Object.keys(saved).sort(), ['bounds', 'facing', 'favorite', 'modelPath', 'posture', 'quiet', 'scale', 'textureQuality']);
   pass('Normal exit aborts pending speech, disposes dialogue and exits successfully. No main network call occurred and saved settings contain no speech, provider, conversation or audio fields.');
 } catch (error) { failure = error; }
 finally {
@@ -418,7 +461,7 @@ finally {
   const settingsUnchanged = (await readFile(normal)).equals(before);
   if (remainingPids.length || !settingsUnchanged) failure ??= new Error('Cleanup/settings invariant failed');
   const result = { status: failure ? 'failed' : 'passed', checks, playbackEvidence, remainingPids, settingsUnchanged,
-    scope: 'Real Electron and WebAudio source/mouth acceptance with held synthetic PCM tones and fixed text replies. No HTTP, live AI, VOICEVOX synthesis, native input, actual OS sleep or perceptual speech-quality claim.', error: failure?.stack };
+    scope: 'Real Electron and WebAudio source/mouth acceptance with held synthetic PCM tones and fixed text replies. Unresponsive notifications are simulated events, not actual renderer hangs. No HTTP, live AI, VOICEVOX synthesis, native input, actual OS sleep or perceptual speech-quality claim.', error: failure?.stack };
   await writeFile(path.join(directory, 'result.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify({ directory, status: result.status, checks: checks.length, remainingPids, settingsUnchanged, error: failure?.message }, null, 2));
 }

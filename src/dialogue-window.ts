@@ -168,6 +168,9 @@ export class DialogueWindowController {
     };
     win.on('close', release);
     win.on('closed', release);
+    // A stalled chat cannot process its own stop button. Close from main so
+    // audio, outstanding replies and the renderer are released together.
+    win.on('unresponsive', () => { if (this.win === win) this.close(); });
     win.webContents.on('render-process-gone', () => { if (this.win === win) this.close(); });
     // Reloading must not replay replies or retain an enabled audio session.
     win.webContents.on('did-start-navigation', (_event, url, _inPlace, mainFrame) => {

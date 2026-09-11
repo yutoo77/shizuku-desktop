@@ -311,7 +311,7 @@ try {
   });
   await writeFile(path.join(directory, 'quit-abort.json'), JSON.stringify(quitEvidence, null, 2));
   const saved = JSON.parse(await readFile(path.join(directory, 'local.config.json'), 'utf8'));
-  assert.deepEqual(Object.keys(saved).sort(), ['bounds', 'facing', 'favorite', 'modelPath', 'posture', 'quiet', 'scale']);
+  assert.deepEqual(Object.keys(saved).sort(), ['bounds', 'facing', 'favorite', 'modelPath', 'posture', 'quiet', 'scale', 'textureQuality']);
   assert.ok(!JSON.stringify(saved).includes(fakeKey));
   checks.push('Normal quit aborts the pending fixture request, disposes chat and exits successfully. No main-process network call occurred; saved settings contain neither provider/key nor conversation fields.');
 } catch (error) { failure = error; }

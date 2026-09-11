@@ -27,7 +27,8 @@
     "test:voice-dialogue": "node scripts/voice-dialogue.mjs",
     "test:native": "node scripts/native-lifecycle.mjs",
     "test:pointer": "node scripts/pointer-placement.mjs",
-    "test:resident": "node scripts/resident-check.mjs"
+    "test:resident": "node scripts/resident-check.mjs",
+    "test:daily-use": "node scripts/daily-use.mjs"
   },
   "engines": {
     "node": ">=24.0.0"

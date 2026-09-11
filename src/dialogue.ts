@@ -64,6 +64,7 @@ let disposed = false;
 let operationError = '';
 let renderedMessages: DialogueSnapshot['messages'] = [];
 let scrollForSend = false;
+let sendFocusController: AbortController | null = null;
 
 function render(): void {
   if (disposed) return;
@@ -137,6 +138,20 @@ async function submit(): Promise<void> {
   if (!snapshot || submitting || changing || snapshot.status === 'pending' || !text || input.value.length > snapshot.inputLimit) return;
   const version = ++operationVersion;
   const submittedDraft = draftVersion;
+  // Disabling the clicked send button can move focus to the document body.
+  // Remember only that explicit click, and give it up if the user moves on.
+  let returnToInput = document.hasFocus() && document.activeElement === send;
+  sendFocusController?.abort();
+  const focusController = new AbortController();
+  sendFocusController = focusController;
+  const cancelFocusReturn = () => { returnToInput = false; focusController.abort(); };
+  const onFocusMoved = (event: FocusEvent) => {
+    if (event.target !== send && event.target !== document.body && event.target !== document.documentElement) cancelFocusReturn();
+  };
+  const onPointerMoved = (event: PointerEvent) => { if (event.target !== send) cancelFocusReturn(); };
+  document.addEventListener('focusin', onFocusMoved, { signal: focusController.signal });
+  document.addEventListener('pointerdown', onPointerMoved, { signal: focusController.signal });
+  window.addEventListener('blur', cancelFocusReturn, { signal: focusController.signal });
   submitting = true;
   operationError = '';
   scrollForSend = true;
@@ -156,9 +171,13 @@ async function submit(): Promise<void> {
     if (disposed || version !== operationVersion) { playback.stop(); return; }
     const accepted = await bridge.send(text);
     if (disposed || version !== operationVersion) return;
-    if (accepted && submittedDraft === draftVersion) {
+    if (accepted && submittedDraft === draftVersion && !composing) {
       input.value = '';
       draftVersion++;
+      if (returnToInput && !composing && document.hasFocus()
+        && (document.activeElement === send || document.activeElement === document.body || document.activeElement === document.documentElement)) {
+        input.focus({ preventScroll: true });
+      }
     } else if (!accepted) {
       playback.stop();
       operationError = '送れませんでした。少し待ってから、もう一度試してね。';
@@ -168,6 +187,8 @@ async function submit(): Promise<void> {
     playback.stop();
     operationError = '送れませんでした。入力は残しています。';
   } finally {
+    focusController.abort();
+    if (sendFocusController === focusController) sendFocusController = null;
     if (!disposed && version === operationVersion) {
       submitting = false;
       render();
@@ -178,6 +199,7 @@ async function submit(): Promise<void> {
 
 async function changeConversation(action: 'cancel' | 'clear'): Promise<void> {
   if (disposed || changing) return;
+  sendFocusController?.abort(); sendFocusController = null;
   const version = ++operationVersion;
   requestVersion++;
   changing = true;
@@ -206,6 +228,7 @@ async function changeConversation(action: 'cancel' | 'clear'): Promise<void> {
 
 async function closeConversation(): Promise<void> {
   if (disposed || close.disabled) return;
+  sendFocusController?.abort(); sendFocusController = null;
   close.disabled = true;
   operationVersion++; requestVersion++; submitting = false;
   playback.stop();
@@ -222,6 +245,7 @@ async function closeConversation(): Promise<void> {
 async function changeProvider(): Promise<void> {
   const value = provider.value;
   if (disposed || changing || composing || (value !== 'local-demo' && value !== 'openai')) return;
+  sendFocusController?.abort(); sendFocusController = null;
   const version = ++operationVersion;
   requestVersion++;
   changing = true; submitting = false; operationError = '';
@@ -246,6 +270,7 @@ async function changeProvider(): Promise<void> {
 async function changeVoice(): Promise<void> {
   const enabled = voiceToggle.checked;
   if (disposed || changing || composing) return;
+  sendFocusController?.abort(); sendFocusController = null;
   const version = ++operationVersion;
   changing = true; operationError = '';
   if (!enabled) playback.stop();
@@ -278,6 +303,12 @@ voiceToggle.addEventListener('change', () => { void changeVoice(); });
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape' || event.isComposing || composing || event.keyCode === 229) return;
   event.preventDefault();
+  if (options.open) {
+    const focusedSetting = options.contains(document.activeElement);
+    options.open = false;
+    if (focusedSetting && document.hasFocus()) options.querySelector<HTMLElement>('summary')?.focus({ preventScroll: true });
+    return;
+  }
   void closeConversation();
 });
 
@@ -306,6 +337,7 @@ const unsubscribeSpeechStop = bridge.onSpeechStop(id => {
 });
 window.addEventListener('unload', () => {
   disposed = true;
+  sendFocusController?.abort(); sendFocusController = null;
   requestVersion++;
   operationVersion++;
   unsubscribe();
