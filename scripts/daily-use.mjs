@@ -11,9 +11,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { summarizeCompanionPhase } from '../src/soak-metrics.mjs';
+import { inspectProcessIdentities } from './process-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const args = process.argv.slice(2);
+if (args.length > 1 || (args.length === 1 && args[0] !== '--long')) throw new Error('Use no arguments for the standard run, or --long for 27 minutes of sampling.');
+const longRun = args[0] === '--long';
 const dryValue = process.env.SHIZUKU_DAILY_DRY_RUN_SECONDS;
+if (longRun && dryValue !== undefined) throw new Error('--long and SHIZUKU_DAILY_DRY_RUN_SECONDS cannot be combined.');
 const drySeconds = dryValue === undefined ? null : Number(dryValue);
 if (drySeconds !== null && (!Number.isSafeInteger(drySeconds) || drySeconds < 30 || drySeconds > 120)) {
   throw new Error('SHIZUKU_DAILY_DRY_RUN_SECONDS must be an integer from 30 to 120; omit it for the full run.');
@@ -21,9 +26,9 @@ if (drySeconds !== null && (!Number.isSafeInteger(drySeconds) || drySeconds < 30
 if (process.env.SHIZUKU_DAILY_GPU !== undefined && !['0', '1'].includes(process.env.SHIZUKU_DAILY_GPU)) {
   throw new Error('SHIZUKU_DAILY_GPU must be 0 or 1 when set.');
 }
-const plan = { mode: drySeconds === null ? 'full' : 'dry-run', originalMs: (drySeconds ?? 300) * 1000,
-  compactMs: (drySeconds ?? 300) * 1000, afterDialogueMs: (drySeconds ?? 120) * 1000,
-  hiddenMs: (drySeconds ?? 60) * 1000, dialogueCycles: 20, sampleIntervalMs: 2000, settleMs: 8000,
+const plan = { mode: longRun ? 'long' : drySeconds === null ? 'full' : 'dry-run', originalMs: (drySeconds ?? (longRun ? 600 : 300)) * 1000,
+  compactMs: (drySeconds ?? (longRun ? 600 : 300)) * 1000, afterDialogueMs: (drySeconds ?? (longRun ? 300 : 120)) * 1000,
+  hiddenMs: (drySeconds ?? (longRun ? 120 : 60)) * 1000, dialogueCycles: 20, sampleIntervalMs: 2000, settleMs: 8000,
   gpu: process.platform === 'win32' && process.env.SHIZUKU_DAILY_GPU !== '0' };
 const normal = path.join(root, 'local.config.json'), before = await readFile(normal);
 const config = JSON.parse(before.toString('utf8').replace(/^\uFEFF/, ''));
@@ -61,7 +66,16 @@ const report = {
 for (const file of ['main.cjs', 'renderer.js', 'dialogue.js', 'window-tracker.exe']) report.builtFiles[file] = await fileIdentity(path.join(root, 'dist', file));
 let app, avatar, chat, failure, activePhase = 'launch', aborted = false, lastNotice = performance.now();
 let checkpointQueue = Promise.resolve();
-const pids = new Set(), collectors = [];
+const pids = new Set(), collectors = [], processIdentities = new Map();
+function recordIdentity(item) {
+  if (!Number.isSafeInteger(item.pid) || item.pid <= 0) return;
+  pids.add(item.pid);
+  processIdentities.set(`${item.pid}:${item.creationTime ?? item.name + ':' + item.parentPid}`, item);
+}
+function recordMetrics(processes, helper) {
+  for (const item of processes) recordIdentity({ pid: item.pid, creationTime: item.creationTime });
+  recordIdentity({ pid: helper, name: 'window-tracker.exe', parentPid: app.process().pid });
+}
 const abort = () => { aborted = true; console.log(JSON.stringify({ event: 'interrupt', phase: activePhase, time: new Date().toISOString() })); };
 process.on('SIGINT', abort); process.on('SIGTERM', abort);
 const checkAbort = () => { if (aborted) throw new Error('Daily-use check interrupted; partial measurements are retained.'); };
@@ -89,8 +103,7 @@ async function recordProcesses() {
   if (!app) return;
   pids.add(app.process().pid);
   const value = await main(() => ({ processes: __shizuku.metrics(), helper: __shizuku.tracking().pid }));
-  for (const item of value.processes) if (Number.isSafeInteger(item.pid) && item.pid > 0) pids.add(item.pid);
-  if (Number.isSafeInteger(value.helper) && value.helper > 0) pids.add(value.helper);
+  recordMetrics(value.processes, value.helper);
 }
 async function waitFor(predicate, label, timeoutMs = 8000) {
   const deadline = performance.now() + timeoutMs;
@@ -110,8 +123,8 @@ async function snapshot() {
   });
   value.diagnostics = await diagnostic();
   pids.add(app.process().pid);
-  for (const item of value.processes) { assert.ok(Number.isSafeInteger(item.pid) && item.pid > 0); pids.add(item.pid); }
-  if (Number.isSafeInteger(value.windowTracker.pid) && value.windowTracker.pid > 0) pids.add(value.windowTracker.pid);
+  for (const item of value.processes) assert.ok(Number.isSafeInteger(item.pid) && item.pid > 0);
+  recordMetrics(value.processes, value.windowTracker.pid);
   return value;
 }
 async function installProbes() {
@@ -154,7 +167,7 @@ async function startGpu(item, firstSample) {
   const child = spawn('pwsh.exe', ['-NoProfile', '-File', path.join(root, 'scripts', 'measure-gpu.ps1'),
     '-Samples', String(Math.max(2, Math.floor(item.requestedDurationMs / 2000) - 2)), '-PidsFile', pidFile, '-Output', output],
   { windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
-  collector.process = child; if (child.pid) pids.add(child.pid);
+  collector.process = child; recordIdentity({ pid: child.pid, name: 'pwsh.exe', parentPid: process.pid });
   child.stdout.on('data', data => { if (collector.stdout.length < 16_384) collector.stdout += data.toString().slice(0, 16_384 - collector.stdout.length); });
   child.stderr.on('data', () => {});
   child.once('error', error => { collector.error = error.message; collector.closed = true; });
@@ -377,6 +390,9 @@ async function closeApp({ normalQuit = false } = {}) {
       assert.equal(report.exit.dialogueDisposed, true);
       assert.equal(child.exitCode, 0, 'Normal quit must exit successfully rather than disappear after a crash.');
       assert.equal(child.signalCode, null, 'Normal quit must not require a termination signal.');
+      // Native app exit and disposal of the driver's Playwright connection are
+      // separate. Release the connection even after observing normal exit.
+      await current.close();
     } catch (error) {
       Object.assign(report.exit, { exitCode: child.exitCode, signalCode: child.signalCode, error: error.message });
       throw error;
@@ -396,7 +412,8 @@ const heartbeat = setInterval(() => {
 try {
   await checkpoint(); progress('launch', { directory, mode: plan.mode });
   app = await _electron.launch({ executablePath: electron, args: [root], cwd: root, env, timeout: 20_000 });
-  pids.add(app.process().pid); avatar = await app.firstWindow(); avatar.setDefaultTimeout(15_000);
+  recordIdentity({ pid: app.process().pid, name: path.basename(electron), parentPid: process.pid });
+  avatar = await app.firstWindow(); avatar.setDefaultTimeout(15_000);
   await avatar.waitForFunction(() => window.__diagnostics?.loaded && window.__diagnostics.quiet && window.__diagnostics.textureQuality === 'original');
   report.versions = await main(() => process.versions);
   report.display = await main(({ screen }) => ({ count: screen.getAllDisplays().length, primary: { workArea: screen.getPrimaryDisplay().workArea, scaleFactor: screen.getPrimaryDisplay().scaleFactor } }));
@@ -424,11 +441,18 @@ try {
 } finally {
   try { await closeApp(); } catch (error) { failure ??= error; report.cleanupError = String(error); }
   for (const collector of collectors) if (!collector.closed) collector.process?.kill();
-  for (let attempt = 0; attempt < 40; attempt++) {
-    report.remainingPids = [...pids].filter(pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; } });
-    if (!report.remainingPids.length) break;
-    await delay(100);
-  }
+  const observed = [...processIdentities.values()];
+  const exact = new Set(observed.filter(item => Number.isFinite(item.creationTime)).map(item => item.pid));
+  report.processIdentities = observed.filter(item => Number.isFinite(item.creationTime) || !exact.has(item.pid));
+  try {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      report.processCheck = await inspectProcessIdentities(report.processIdentities, directory);
+      report.remainingPids = report.processCheck.remainingPids;
+      if (!report.remainingPids.length && !report.processCheck.unverifiablePids.length) break;
+      await delay(500);
+    }
+    assert.deepEqual(report.processCheck.unverifiablePids, [], 'Recorded process identities must be verifiable.');
+  } catch (error) { failure ??= error; report.processCheckError = String(error); }
   try {
     report.userSettingsUnchanged = (await readFile(normal)).equals(before);
     report.modelAfter = await fileIdentity(config.modelPath); report.modelUnchanged = report.modelAfter.sha256 === report.modelBefore.sha256 && report.modelAfter.bytes === report.modelBefore.bytes;
@@ -437,7 +461,7 @@ try {
     for (const [file, expected] of Object.entries(report.builtFiles)) if ((await fileIdentity(path.join(root, 'dist', file))).sha256 !== expected.sha256) report.buildUnchanged = false;
   } catch (error) { failure ??= error; report.identityCheckError = String(error); }
   if (aborted) failure ??= new Error('Daily-use check interrupted.');
-  if (report.remainingPids.length || report.userSettingsUnchanged !== true || report.modelUnchanged !== true || report.buildUnchanged !== true || report.scriptUnchanged !== true) failure ??= new Error('Process, settings, model, build or script identity invariant failed.');
+  if (!report.remainingPids || report.remainingPids.length || report.userSettingsUnchanged !== true || report.modelUnchanged !== true || report.buildUnchanged !== true || report.scriptUnchanged !== true) failure ??= new Error('Process, settings, model, build or script identity invariant failed.');
   if (!failure) report.checks.push('All recorded launcher, Electron, tracker and GPU collector processes exit; normal settings, selected model bytes, measured build hashes and the acceptance script remain unchanged.');
   report.status = failure ? 'failed' : 'passed'; report.functionalStatus = report.status;
   report.measurementStatus = report.phases.length === 4 && report.phases.every(item => item.measurementValid === true) ? 'valid' : 'incomplete';
