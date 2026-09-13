@@ -16,10 +16,11 @@ import { startGpuCollector, summarizeGpuSamples, classifyGpuPhases } from './gpu
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
-if (args.length > 1 || (args.length === 1 && args[0] !== '--long')) throw new Error('Use no arguments for the standard run, or --long for 27 minutes of sampling.');
+if (args.length > 1 || (args.length === 1 && !['--long', '--extended'].includes(args[0]))) throw new Error('Use no arguments for the standard run, --long for 27 minutes, or --extended for 120 minutes of sampling.');
 const longRun = args[0] === '--long';
+const extendedRun = args[0] === '--extended';
 const dryValue = process.env.SHIZUKU_DAILY_DRY_RUN_SECONDS;
-if (longRun && dryValue !== undefined) throw new Error('--long and SHIZUKU_DAILY_DRY_RUN_SECONDS cannot be combined.');
+if ((longRun || extendedRun) && dryValue !== undefined) throw new Error('A timed run and SHIZUKU_DAILY_DRY_RUN_SECONDS cannot be combined.');
 const drySeconds = dryValue === undefined ? null : Number(dryValue);
 if (drySeconds !== null && (!Number.isSafeInteger(drySeconds) || drySeconds < 30 || drySeconds > 120)) {
   throw new Error('SHIZUKU_DAILY_DRY_RUN_SECONDS must be an integer from 30 to 120; omit it for the full run.');
@@ -27,9 +28,9 @@ if (drySeconds !== null && (!Number.isSafeInteger(drySeconds) || drySeconds < 30
 if (process.env.SHIZUKU_DAILY_GPU !== undefined && !['0', '1'].includes(process.env.SHIZUKU_DAILY_GPU)) {
   throw new Error('SHIZUKU_DAILY_GPU must be 0 or 1 when set.');
 }
-const plan = { mode: longRun ? 'long' : drySeconds === null ? 'full' : 'dry-run', originalMs: (drySeconds ?? (longRun ? 600 : 300)) * 1000,
-  compactMs: (drySeconds ?? (longRun ? 600 : 300)) * 1000, afterDialogueMs: (drySeconds ?? (longRun ? 300 : 120)) * 1000,
-  hiddenMs: (drySeconds ?? (longRun ? 120 : 60)) * 1000, dialogueCycles: 20, sampleIntervalMs: 2000, settleMs: 8000,
+const plan = { mode: extendedRun ? 'extended' : longRun ? 'long' : drySeconds === null ? 'full' : 'dry-run', originalMs: (drySeconds ?? (extendedRun ? 2400 : longRun ? 600 : 300)) * 1000,
+  compactMs: (drySeconds ?? (extendedRun ? 2400 : longRun ? 600 : 300)) * 1000, afterDialogueMs: (drySeconds ?? (extendedRun ? 1800 : longRun ? 300 : 120)) * 1000,
+  hiddenMs: (drySeconds ?? (extendedRun ? 600 : longRun ? 120 : 60)) * 1000, dialogueCycles: 20, sampleIntervalMs: 2000, settleMs: 8000,
   gpu: process.platform === 'win32' && process.env.SHIZUKU_DAILY_GPU !== '0' };
 const normal = path.join(root, 'local.config.json'), before = await readFile(normal);
 const config = JSON.parse(before.toString('utf8').replace(/^\uFEFF/, ''));
