@@ -33,6 +33,7 @@
     "test:window-lifecycle": "node scripts/window-lifecycle.mjs",
     "test:gpu": "node scripts/gpu-check.mjs",
     "test:model-selection": "node scripts/model-selection.mjs",
+    "test:startup": "node scripts/startup.mjs",
     "test:model-compatibility": "node scripts/model-compatibility.mjs"
   },
   "engines": {

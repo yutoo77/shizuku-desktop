@@ -40,8 +40,11 @@ function renderStatus(): void {
     radio.disabled = busy || currentStatus === null;
     radio.checked = radio.value === currentStatus?.textureQuality;
   }
-  document.querySelector('#error')!.textContent = operationError || currentStatus?.error || '';
+  const error = operationError || currentStatus?.error || '';
+  document.querySelector('#error')!.textContent = currentStatus?.loaded !== false ? error : '';
   if (!currentStatus) return;
+  document.querySelector<HTMLElement>('#model-setup')!.hidden = currentStatus.loaded;
+  document.querySelector('#model-setup-message')!.textContent = error || '利用条件を確認したVRMを選んでください。';
   document.querySelector('#model')!.textContent = currentStatus.model || 'モデル未選択';
   document.querySelector('#shortcuts')!.textContent = currentStatus.shortcuts ? '' : 'ショートカットを登録できませんでした。通知領域のアイコンから操作できます。';
   moveButton.textContent = currentStatus.moving ? 'ドラッグをやめる' : '直接ドラッグ（試験中）';

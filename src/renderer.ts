@@ -82,7 +82,7 @@ async function reload(): Promise<void> {
     }
     if (!buffer) {
       avatar.clear();
-      reportError(new Error('トレイの「VRMを選ぶ…」からVRMを選んでください。'));
+      reportError(new Error('利用条件を確認したVRMを選んでください。'));
       return;
     }
     await avatar.load(buffer, textureQuality);
