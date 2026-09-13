@@ -168,6 +168,25 @@ try {
   await sendHeld('消したあとの新しい会話。', 1); await reply('前の履歴は戻らないよ。', 2);
   assert.deepEqual(await chat.locator('#messages .message').allTextContents(), ['消したあとの新しい会話。', '前の履歴は戻らないよ。']);
   check('Clearing removes retained nodes and starts a fresh bounded conversation.');
+
+  await chat.evaluate(() => window.dialogue.clear()); await waitState('idle', 0);
+  await main(() => __shizuku.dialogue().setSize(360, 320));
+  for (let index = 0; index < 2; index++) {
+    await sendHeld(`窓の大きさを変える確認 ${index + 1}。前の話を読んでいます。`.repeat(2), index * 2 + 1);
+    await reply('うん、窓を広げたら届いた返事をそのまま読めるようにするね。'.repeat(2), index * 2 + 2);
+  }
+  await sendHeld('少し前の話を読みながら待っています。', 5);
+  await chat.evaluate(() => { document.querySelector('.conversation').scrollTop = 0; });
+  await reply('窓を広げたときの案内も確認するね。', 6);
+  assert.equal(await chat.locator('#latest').isVisible(), true);
+  await main(({ screen }) => {
+    const area = screen.getPrimaryDisplay().workArea;
+    __shizuku.dialogue().setBounds({ x: area.x + 20, y: area.y + 20, width: 360, height: Math.min(900, area.height - 40) });
+  });
+  await chat.waitForFunction(() => { const v = document.querySelector('.conversation'); return v.scrollHeight <= v.clientHeight; });
+  await delay(100);
+  assert.equal(await chat.locator('#latest').isHidden(), true, 'Enlarging the window until all replies fit must dismiss the unread cue.');
+  check('Enlarging the window until the reply is visible dismisses the cue without an extra click or scroll.');
   assert.equal(report.rendererHttpAttempts, 0); await processes();
 } catch (error) { failure = error; }
 finally {

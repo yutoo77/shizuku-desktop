@@ -316,6 +316,7 @@ async function changeVoice(): Promise<void> {
 
 input.addEventListener('input', () => { draftVersion++; render(); });
 conversation.addEventListener('scroll', updateLatest, { passive: true });
+window.addEventListener('resize', updateLatest);
 latest.addEventListener('click', () => {
   conversation.scrollTop = conversation.scrollHeight;
   if (document.hasFocus() && document.activeElement === latest) conversation.focus({ preventScroll: true });
