@@ -29,7 +29,8 @@
     "test:pointer": "node scripts/pointer-placement.mjs",
     "test:resident": "node scripts/resident-check.mjs",
     "test:daily-use": "node scripts/daily-use.mjs",
-    "test:window-lifecycle": "node scripts/window-lifecycle.mjs"
+    "test:window-lifecycle": "node scripts/window-lifecycle.mjs",
+    "test:gpu": "node scripts/gpu-check.mjs"
   },
   "engines": {
     "node": ">=24.0.0"

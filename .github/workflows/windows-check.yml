@@ -43,6 +43,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Type check, unit tests and build
         run: npm run check
+      - name: Compile measurement helper (no GPU query)
+        run: node scripts/measure-gpu.mjs --build-only
       - name: Audit dependencies
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm audit

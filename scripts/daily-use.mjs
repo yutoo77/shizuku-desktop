@@ -6,12 +6,13 @@ import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdtemp, mkdir, rename } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { cpus, release, totalmem } from 'node:os';
-import { spawn, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { summarizeCompanionPhase } from '../src/soak-metrics.mjs';
 import { inspectProcessIdentities } from './process-check.mjs';
+import { startGpuCollector, summarizeGpuSamples, classifyGpuPhases } from './gpu-collector.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -162,16 +163,14 @@ async function startGpu(item, firstSample) {
   const ids = [...new Set([...firstSample.processes.map(p => p.pid), firstSample.windowTracker.pid])];
   const pidFile = path.join(directory, `${item.name}-gpu-pids.json`), output = path.join(directory, `${item.name}-gpu.json`);
   await writeFile(pidFile, JSON.stringify(ids));
-  const collector = { output, phase: item.name, process: null, closed: false, exitCode: null, stdout: '', error: null };
+  const collector = { output, phase: item.name, handle: null, closed: false, exitCode: null, result: null, error: null };
   collectors.push(collector);
-  const child = spawn('pwsh.exe', ['-NoProfile', '-File', path.join(root, 'scripts', 'measure-gpu.ps1'),
-    '-Samples', String(Math.max(2, Math.floor(item.requestedDurationMs / 2000) - 2)), '-PidsFile', pidFile, '-Output', output],
-  { windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
-  collector.process = child; recordIdentity({ pid: child.pid, name: 'pwsh.exe', parentPid: process.pid });
-  child.stdout.on('data', data => { if (collector.stdout.length < 16_384) collector.stdout += data.toString().slice(0, 16_384 - collector.stdout.length); });
-  child.stderr.on('data', () => {});
-  child.once('error', error => { collector.error = error.message; collector.closed = true; });
-  child.once('close', code => { collector.closed = true; collector.exitCode = code; });
+  collector.handle = await startGpuCollector({ pids: ids, samples: Math.max(2, Math.floor(item.requestedDurationMs / 2000) - 2), output });
+  recordIdentity({ pid: collector.handle.pid, name: 'gpu-counter.exe', parentPid: process.pid });
+  collector.handle.done.then(result => {
+    collector.result = result; collector.closed = true; collector.exitCode = result.exit?.code ?? null;
+    if (result.status !== 'completed') collector.error = `GPU collector ${result.status}`;
+  }, () => { collector.error = 'GPU collector failed'; collector.closed = true; });
   item.gpu = { enabled: true, fixedPids: ids, samples: 0, valid: 0, mean: null, max: null, stablePhase: false };
   return collector;
 }
@@ -179,19 +178,19 @@ async function finishGpu(item, collector, stablePhase) {
   if (!collector) return;
   const deadline = performance.now() + 8000;
   while (!collector.closed && performance.now() < deadline && !aborted) await delay(100);
-  if (!collector.closed) { collector.process.kill(); collector.error ??= 'Collector exceeded its stable phase.'; }
+  if (!collector.closed && collector.handle) {
+    collector.error ??= 'Collector exceeded its stable phase.';
+    await collector.handle.stop(); await collector.handle.done;
+  }
   item.gpu.stablePhase = stablePhase; item.gpu.exitCode = collector.exitCode;
+  item.gpu.collectorStatus = collector.result?.status;
+  item.gpu.sourceSha256 = collector.result?.sourceSha256;
   if (collector.error) item.gpu.error = collector.error;
   try {
     const samples = JSON.parse((await readFile(collector.output, 'utf8')).replace(/^\uFEFF/, ''));
-    const inPhase = samples.filter(sample => Date.parse(sample.time) >= Date.parse(item.startedAt) + 2000
-      && Date.parse(sample.time) <= Date.parse(item.endedAt));
-    const valid = stablePhase && collector.closed && collector.exitCode === 0
-      ? inPhase.filter(sample => sample.available === true && Number.isFinite(sample.busiestEnginePercent)
-        && sample.busiestEnginePercent >= 0 && sample.busiestEnginePercent <= 100) : [];
-    Object.assign(item.gpu, { samples: inPhase.length, valid: valid.length,
-      mean: valid.length ? valid.reduce((sum, sample) => sum + sample.busiestEnginePercent, 0) / valid.length : null,
-      max: valid.length ? Math.max(...valid.map(sample => sample.busiestEnginePercent)) : null });
+    const summary = summarizeGpuSamples(samples, { start: Date.parse(item.startedAt), end: Date.parse(item.endedAt) });
+    Object.assign(item.gpu, stablePhase && collector.result?.status === 'completed' ? summary
+      : { samples: summary.samples, valid: 0, unavailableSamples: summary.samples, mean: null, max: null });
   } catch (error) { item.gpu.error ??= error.message; }
 }
 async function stablePhase(name, durationMs, quality, visible) {
@@ -440,7 +439,7 @@ try {
   failure = error; report.error = error instanceof Error ? error.stack : String(error);
 } finally {
   try { await closeApp(); } catch (error) { failure ??= error; report.cleanupError = String(error); }
-  for (const collector of collectors) if (!collector.closed) collector.process?.kill();
+  for (const collector of collectors) if (!collector.closed && collector.handle) { await collector.handle.stop(); await collector.handle.done.catch(() => {}); }
   const observed = [...processIdentities.values()];
   const exact = new Set(observed.filter(item => Number.isFinite(item.creationTime)).map(item => item.pid));
   report.processIdentities = observed.filter(item => Number.isFinite(item.creationTime) || !exact.has(item.pid));
@@ -465,10 +464,11 @@ try {
   if (!failure) report.checks.push('All recorded launcher, Electron, tracker and GPU collector processes exit; normal settings, selected model bytes, measured build hashes and the acceptance script remain unchanged.');
   report.status = failure ? 'failed' : 'passed'; report.functionalStatus = report.status;
   report.measurementStatus = report.phases.length === 4 && report.phases.every(item => item.measurementValid === true) ? 'valid' : 'incomplete';
+  report.gpuMeasurementStatus = classifyGpuPhases(report.phases, plan.gpu);
   report.finishedAt = new Date().toISOString(); report.recordedPids = [...pids];
   clearInterval(heartbeat); await checkpoint(); process.off('SIGINT', abort); process.off('SIGTERM', abort);
   progress('finished', { status: report.status, directory, mode: plan.mode, cycles: report.cycles.length, remainingPids: report.remainingPids,
-    measurementStatus: report.measurementStatus, userSettingsUnchanged: report.userSettingsUnchanged, modelUnchanged: report.modelUnchanged,
+    measurementStatus: report.measurementStatus, gpuMeasurementStatus: report.gpuMeasurementStatus, userSettingsUnchanged: report.userSettingsUnchanged, modelUnchanged: report.modelUnchanged,
     buildUnchanged: report.buildUnchanged, scriptUnchanged: report.scriptUnchanged });
 }
 if (failure) throw failure;
