@@ -98,24 +98,40 @@ function render(): void {
   error.textContent = operationError || snapshot?.error || snapshot?.voice?.error || '';
   const next = snapshot?.messages ?? [];
   empty.hidden = next.length > 0;
-  const prefixUnchanged = renderedMessages.every((message, index) => {
+  const unchanged = next.length === renderedMessages.length && renderedMessages.every((message, index) => {
     const candidate = next[index];
     return candidate?.id === message.id && candidate.role === message.role && candidate.text === message.text;
   });
-  const nearBottom = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 48;
-  if (!prefixUnchanged) messages.replaceChildren();
-  const added = next.slice(prefixUnchanged ? renderedMessages.length : 0);
-  for (const message of added) {
-    const bubble = document.createElement('p');
-    bubble.className = `message ${message.role}`;
-    bubble.dataset.messageId = message.id;
-    bubble.setAttribute('aria-label', `${message.role === 'user' ? 'あなた' : 'しずく'}：${message.text}`);
-    bubble.textContent = message.text;
-    messages.append(bubble);
-  }
-  renderedMessages = next.map(message => ({ ...message }));
-  if ((added.length > 0 || !prefixUnchanged) && (nearBottom || scrollForSend)) {
-    conversation.scrollTop = conversation.scrollHeight;
+  if (!unchanged) {
+    const followLatest = scrollForSend || conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 48;
+    const retained = new Set(next.map(message => message.id));
+    const existing = new Map(Array.from(messages.children, child => {
+      const bubble = child as HTMLParagraphElement;
+      return [bubble.dataset.messageId!, bubble] as const;
+    }));
+    const viewportTop = conversation.getBoundingClientRect().top;
+    // Keep the first surviving visible message in place when older history is
+    // pruned. Reusing its node also preserves a user's text selection and avoids
+    // announcing every retained reply as a new addition to the live region.
+    const anchor = followLatest ? undefined : Array.from(existing.values()).find(bubble =>
+      retained.has(bubble.dataset.messageId!) && bubble.getBoundingClientRect().bottom > viewportTop);
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    for (const [id, bubble] of existing) if (!retained.has(id)) bubble.remove();
+    for (const [index, message] of next.entries()) {
+      const bubble = existing.get(message.id) ?? document.createElement('p');
+      const label = `${message.role === 'user' ? 'あなた' : 'しずく'}：${message.text}`;
+      if (bubble.getAttribute('aria-label') !== label) {
+        bubble.className = `message ${message.role}`;
+        bubble.dataset.messageId = message.id;
+        bubble.setAttribute('aria-label', label);
+        bubble.textContent = message.text;
+      }
+      const current = messages.children[index] ?? null;
+      if (current !== bubble) messages.insertBefore(bubble, current);
+    }
+    if (followLatest) conversation.scrollTop = conversation.scrollHeight;
+    else if (anchor && anchorTop !== undefined) conversation.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+    renderedMessages = next.map(message => ({ ...message }));
     scrollForSend = false;
   }
 }

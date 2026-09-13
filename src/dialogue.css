@@ -63,7 +63,7 @@ select { width: 100%; min-height: 34px; margin-top: 5px; border: 1px solid #bdcf
 .voice-toggle { display: flex; align-items: center; gap: 5px; margin-top: 10px; }
 .voice-toggle input { width: 16px; height: 16px; accent-color: #457ca4; }
 .voice-help { color: #587488; font-size: 11px; }
-.conversation { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 4px 3px; }
+.conversation { min-height: 0; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: none; scrollbar-gutter: stable; padding: 4px 3px; }
 #empty { color: #627d90; margin: 12px 1px; font-size: 13px; }
 #messages { display: flex; flex-direction: column; gap: 10px; }
 .message { max-width: 94%; margin: 0; border-radius: 11px; padding: 9px 11px; line-height: 1.65; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
