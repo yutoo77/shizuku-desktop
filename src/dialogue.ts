@@ -37,6 +37,7 @@ const clear = document.querySelector<HTMLButtonElement>('#clear')!;
 const close = document.querySelector<HTMLButtonElement>('#close')!;
 const error = document.querySelector<HTMLElement>('#error')!;
 const pending = document.querySelector<HTMLElement>('#pending')!;
+const latest = document.querySelector<HTMLButtonElement>('#latest')!;
 const empty = document.querySelector<HTMLElement>('#empty')!;
 const options = document.querySelector<HTMLDetailsElement>('#options')!;
 const provider = document.querySelector<HTMLSelectElement>('#provider')!;
@@ -64,7 +65,17 @@ let disposed = false;
 let operationError = '';
 let renderedMessages: DialogueSnapshot['messages'] = [];
 let scrollForSend = false;
+let unreadReply = false;
 let sendFocusController: AbortController | null = null;
+
+function nearLatest(): boolean {
+  return conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 48;
+}
+
+function updateLatest(): void {
+  if (nearLatest()) unreadReply = false;
+  latest.hidden = !unreadReply;
+}
 
 function render(): void {
   if (disposed) return;
@@ -103,7 +114,10 @@ function render(): void {
     return candidate?.id === message.id && candidate.role === message.role && candidate.text === message.text;
   });
   if (!unchanged) {
-    const followLatest = scrollForSend || conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 48;
+    const followLatest = scrollForSend || nearLatest();
+    const previousIds = new Set(renderedMessages.map(message => message.id));
+    if (followLatest || next.length === 0) unreadReply = false;
+    else if (next.some(message => message.role === 'assistant' && !previousIds.has(message.id))) unreadReply = true;
     const retained = new Set(next.map(message => message.id));
     const existing = new Map(Array.from(messages.children, child => {
       const bubble = child as HTMLParagraphElement;
@@ -134,6 +148,7 @@ function render(): void {
     renderedMessages = next.map(message => ({ ...message }));
     scrollForSend = false;
   }
+  updateLatest();
 }
 
 async function refresh(): Promise<void> {
@@ -300,6 +315,13 @@ async function changeVoice(): Promise<void> {
 }
 
 input.addEventListener('input', () => { draftVersion++; render(); });
+conversation.addEventListener('scroll', updateLatest, { passive: true });
+latest.addEventListener('click', () => {
+  conversation.scrollTop = conversation.scrollHeight;
+  if (document.hasFocus() && document.activeElement === latest) conversation.focus({ preventScroll: true });
+  unreadReply = false;
+  updateLatest();
+});
 input.addEventListener('compositionstart', () => { composing = true; render(); });
 input.addEventListener('compositionend', () => { composing = false; render(); });
 input.addEventListener('keydown', event => {

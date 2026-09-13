@@ -32,10 +32,13 @@
     </details>
     <button id="close" class="icon-button" type="button" aria-label="会話を閉じる">×</button>
   </header>
-  <section class="conversation" aria-label="会話">
-    <p id="empty">うん、ここにいるよ。</p>
-    <div id="messages" role="log" aria-label="会話の履歴" aria-live="polite" aria-relevant="additions text"></div>
-  </section>
+  <div class="conversation-shell">
+    <section class="conversation" aria-label="会話" tabindex="-1">
+      <p id="empty">うん、ここにいるよ。</p>
+      <div id="messages" role="log" aria-label="会話の履歴" aria-live="polite" aria-relevant="additions text"></div>
+    </section>
+    <button id="latest" type="button" aria-controls="messages" hidden>新しい返事 ↓</button>
+  </div>
   <form id="composer">
     <p id="error" role="alert"></p>
     <label class="sr-only" for="message">話しかける</label>
