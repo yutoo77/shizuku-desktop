@@ -65,6 +65,7 @@ let saveTimer: NodeJS.Timeout | undefined;
 let quitting = false;
 let quitFlushComplete = false;
 let choosing = false;
+let modelSelectionRevision = 0;
 let writeQueue = Promise.resolve();
 let pendingAvatarBounds: Rectangle | undefined;
 let avatarPlacementGeneration = 0;
@@ -84,6 +85,7 @@ const area = () => screen.getPrimaryDisplay().workArea;
 
 function beginSystemRest(reason: 'suspend' | 'lock') {
   if (quitting || restReasons.has(reason)) return;
+  modelSelectionRevision++;
   restReasons.add(reason);
   if (restSnapshot) return;
   restSnapshot = { visible, controlsVisible: !!controls?.isVisible(), following: !!following };
@@ -151,7 +153,7 @@ function saveSoon() {
   saveTimer = setTimeout(() => void save(), 400);
 }
 function setVisible(next: boolean) {
-  if (!next) dialogue?.close();
+  if (!next) { modelSelectionRevision++; dialogue?.close(); }
   if (systemResting()) { if (!next && restSnapshot) restSnapshot.visible = false; return; }
   stopFollowing(false);
   applyVisibility(next);
@@ -621,22 +623,27 @@ async function chooseModel() {
   cancelSeat();
   setMoveMode(false);
   choosing = true;
+  const revision = ++modelSelectionRevision;
+  // Hide/rest can happen while the native dialog or file read is pending.
+  // Resuming does not renew that old request, including its error result.
+  const current = () => !quitting && !systemResting() && revision === modelSelectionRevision;
   try {
     const options = { title: '利用条件を確認したVRMを選ぶ', filters: [{ name: 'VRM', extensions: ['vrm'] }], properties: ['openFile' as const] };
     const result = controls ? await dialog.showOpenDialog(controls, options) : await dialog.showOpenDialog(options);
-    if (quitting || result.canceled || !result.filePaths[0]) return;
+    if (!current() || result.canceled || !result.filePaths[0]) return;
     const next = result.filePaths[0];
     await readModel(next);
-    if (quitting) return;
+    if (!current()) return;
     modelPath = next;
     modelLoaded = false;
     loadError = '';
-    await save();
-    if (quitting) return;
     avatar?.webContents.send('model:changed');
     setVisible(true);
+    // Commit reload/visibility together before waiting for persistence. A hide
+    // during the write must not be followed by another show or stale reload.
+    await save();
   } catch (error) {
-    if (quitting) return;
+    if (!current()) return;
     loadError = error instanceof Error ? error.message : 'モデルを読めませんでした。';
     updateMenu();
     openControls();
