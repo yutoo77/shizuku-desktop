@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>しずく</title><link rel="stylesheet" href="style.css"></head>
+<body class="controls">
+<div id="model-setup" hidden><p id="model-setup-message" role="status">利用条件を確認したVRMを選んでください。</p><button data-action="choose-model">VRMを選ぶ…</button></div>
+<div class="row"><button id="call" data-action="call">呼ぶ</button><button id="pointer-place" data-action="pointer-place">ポインターで移動</button></div>
+<p class="hint" id="move-hint" role="status">矢印でも位置を調整できます。</p>
+<div class="row seat-row"><button id="seat" data-action="seat-countdown">3秒後のポインター位置に座る</button></div>
+<div class="row follow-row"><button id="follow" data-action="follow-countdown" aria-pressed="false">窓を選んで座る</button></div>
+<div class="appearance-options"><fieldset class="size-options"><legend>姿勢</legend><div class="size-choices"><label><input type="radio" name="posture" value="standing" data-action="stand">立つ</label><label><input type="radio" name="posture" value="sitting" data-action="sit">座る</label></div></fieldset><fieldset class="size-options"><legend>大きさ</legend><div class="size-choices"><label><input type="radio" name="size" value="80" data-action="size-small">小</label><label><input type="radio" name="size" value="100" data-action="size-standard">標準</label><label><input type="radio" name="size" value="120" data-action="size-large">大</label></div></fieldset></div>
+<div class="appearance-options presence-options"><fieldset class="size-options"><legend>向き</legend><div class="size-choices"><label><input type="radio" name="facing" value="left" data-action="face-left">左</label><label><input type="radio" name="facing" value="right" data-action="face-right">右</label></div></fieldset><button id="quiet" data-action="quiet" aria-pressed="false">動きを休める</button></div>
+<div class="arrows"><button data-action="left" aria-label="左へ">←</button><button data-action="up" aria-label="上へ">↑</button><button data-action="down" aria-label="下へ">↓</button><button data-action="right" aria-label="右へ">→</button></div>
+<div class="row favorite-row"><button data-action="save-favorite">この位置を覚える</button><button data-action="restore-favorite">覚えた位置へ</button></div>
+<div class="row"><button data-action="reset">画面端に戻す</button><button data-action="hide">隠す</button><button data-action="show">表示</button></div>
+<details><summary>モデルと操作</summary><p>移動はMで開始し、ポインターを動かしてもう一度Mで決定。Escまたは30秒経過で元に戻ります。クリックは背後へ通ります。</p><button id="move-mode" data-action="move-mode">直接ドラッグ（試験中）</button><p>直接ドラッグ後は、作業中の入力欄をクリックし直す必要がある場合があります。</p><p id="model"></p><button data-action="choose-model">VRMを選ぶ…</button>
+<fieldset class="size-options texture-options"><legend>モデルの画像</legend><div class="size-choices"><label><input type="radio" name="texture-quality" value="original" data-action="texture-original" aria-describedby="texture-hint">元の画質</label><label><input type="radio" name="texture-quality" value="compact" data-action="texture-compact" aria-describedby="texture-hint">メモリを抑える</label></div></fieldset>
+<p id="texture-hint">メモリを抑えると、細かい模様が変わる場合があります。切り替えるとモデルを読み直し、窓の追従を解除します。</p>
+<p>座らせたい窓の縁にポインターを置き、Ctrl + Alt + Shift + E を押しても位置を合わせられます。この配置は固定です。窓を追う場合は、その窓を選んでCtrl + Alt + Shift + Wを押します。上に余白がない間や最小化中は隠れて待ち、閉じたら画面端へ戻ります。もう一度Wで解除できます。</p><p>Ctrl + Alt + Shift と組み合わせて：<br>C：呼ぶ　P：立つ／座る<br>E：ここに座る　W：窓に座る／解除<br>B：覚えた位置へ<br>F：左右の向き　Z：動きを休める／戻す<br>M：ポインター移動／決定<br>S：隠す／戻す　R：画面端に戻す<br>Q：終了</p><p id="shortcuts"></p><button data-action="quit">終了</button></details>
+<p id="error" role="status"></p><script type="module" src="controls.js"></script></body></html>

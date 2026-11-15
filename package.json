@@ -1,0 +1,54 @@
+{
+  "name": "shizuku-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs",
+    "check": "npm run typecheck && npm test && npm run build",
+    "start": "npm run build && electron .",
+    "smoke": "node scripts/smoke.mjs",
+    "soak": "node scripts/soak.mjs",
+    "test:resources": "node scripts/resources.mjs",
+    "test:texture-quality": "node scripts/texture-quality.mjs",
+    "test:context": "node scripts/context-recovery.mjs",
+    "test:postures": "node scripts/postures.mjs",
+    "test:placement": "node scripts/placement.mjs",
+    "test:follow": "node scripts/follow-window.mjs",
+    "test:order": "node scripts/window-order.mjs",
+    "test:picker": "node scripts/window-picker.mjs",
+    "test:rest": "node scripts/system-rest.mjs",
+    "test:dialogue": "node scripts/dialogue.mjs",
+    "test:dialogue-reading": "node scripts/dialogue-reading.mjs",
+    "test:ai-dialogue": "node scripts/ai-dialogue.mjs",
+    "test:voice-dialogue": "node scripts/voice-dialogue.mjs",
+    "test:native": "node scripts/native-lifecycle.mjs",
+    "test:pointer": "node scripts/pointer-placement.mjs",
+    "test:resident": "node scripts/resident-check.mjs",
+    "test:daily-use": "node scripts/daily-use.mjs",
+    "test:window-lifecycle": "node scripts/window-lifecycle.mjs",
+    "test:gpu": "node scripts/gpu-check.mjs",
+    "test:model-selection": "node scripts/model-selection.mjs",
+    "test:startup": "node scripts/startup.mjs",
+    "test:model-compatibility": "node scripts/model-compatibility.mjs"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "dependencies": {
+    "@pixiv/three-vrm": "3.5.5",
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.0",
+    "@types/three": "0.185.4",
+    "electron": "44.11.3",
+    "esbuild": "0.28.2",
+    "playwright": "1.62.1",
+    "typescript": "6.0.3"
+  }
+}

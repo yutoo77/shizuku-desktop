@@ -1,0 +1,14 @@
+node_modules/
+dist/
+work/
+local.config.json
+*.vrm
+*.env
+.env*
+*.log
+*.wav
+*.mp3
+*.sqlite*
+*.db
+coverage/
+test-results/
