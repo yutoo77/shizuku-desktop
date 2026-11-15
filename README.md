@@ -6,6 +6,14 @@ Windowsのデスクトップに、月白しずくが静かに寄り添うこと�
 
 [設計・開発の説明と3分デモ](docs/portfolio.md) · [操作の詳細](docs/usage.md) · [実使用チェック](docs/user-check.md) · [Windows CIの設定](.github/workflows/windows-check.yml)
 
+## 実画面
+
+| キャラクター表示 | 操作窓 |
+| --- | --- |
+| ![透明なElectronウィンドウに表示したAvatarSample_A](docs/screenshots/avatar-sample-a.png) | ![Shizuku Desktopの操作窓](docs/screenshots/controls-sample-a.png) |
+
+2026-11-15に公開版をWindowsで隔離起動し、[VRoid公式のサンプルモデル AvatarSample_A](https://vroid.pixiv.help/hc/ja/articles/4402394424089-AvatarSample-A-Z)で撮影した実画面です。モデル本体は同梱せず、この画像は専用キャラクターの完成外見やAI・音声機能の動作を示すものではありません。pixivによる本アプリの支援・推奨を示すものでもありません。
+
 ## できること
 
 - **静かな常駐**：透明表示、クリック透過、立位・座位・大きさ・向きの変更、静止表示。
